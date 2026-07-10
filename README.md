@@ -51,6 +51,23 @@ Controllers use **two ports** with distinct roles:
 
 **Commands (port 65534):** The server sends command frames and waits for a response. Each command has a sequence number for matching requests to responses.
 
+### Pointing Controllers at Your Server
+
+Controllers need to know where to send events. You configure this with `SetReportIP` and `SetReportPort` via a text command (cmd 0x94):
+
+```go
+tc := s4a.NewTextCommand().
+    SetReportIP("10.254.33.14").  // your server IP
+    SetReportPort(50000).           // your listener port
+    SetIPMode(s4a.IPModeTCPClient)  // or IPModeUDP
+    SetName("FrontDoor")
+client.SendTextCommand(ctx, tc)
+```
+
+This tells the controller: "send heartbeat and event data to 10.254.33.14:50000". Without this, the controller has nowhere to push events and your server will never see card swipes.
+
+For TCP Client mode (recommended), the controller initiates the connection to your server and keeps it open, so it also needs your IP/port. For UDP, the controller sends datagrams to `ReportIP:ReportPort`.
+
 ### Transport Modes
 
 | Mode       | How it works                                                                                                                              | When to use                                      |
