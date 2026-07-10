@@ -206,6 +206,102 @@ The controller reserves these card numbers for special events -- they cannot be 
 | 7777777            | Gate timeout (person didn't pass through after swipe) |
 | 111111111111111110 | Wildcard -- grants access to all national ID cards    |
 
+## Safe Production Integration
+
+If controllers are already running in production (managing real doors with real access), follow these steps to integrate this library without disrupting anything.
+
+### Step 1: Listen only (zero risk)
+
+Start by listening on port 50000 to observe what the controller is already sending. This is purely passive -- no commands are sent to the controller.
+
+```go
+listener, _ := s4a.NewEventListener(":50000")
+defer listener.Close()
+
+listener.ListenEvents(ctx, func(evt *s4a.Event) error {
+    fmt.Printf("[%s] type=%d card=%s door=%s result=%s\n",
+        evt.SwipeTime, evt.Type, evt.CardData, evt.DoorNo, evt.Result)
+    return nil
+})
+```
+
+**Important:** If the existing S4A Windows software is already listening on port 50000, you cannot bind the same port. Options:
+
+1. Run your listener on a different port and change the controller's `ReportPort` to point to it (this will break the Windows software's event stream)
+2. Run both on the same machine with `SO_REUSEPORT`, or proxy events
+3. Stop the Windows software entirely and replace it with your Go application
+
+### Step 2: Read controller status (read-only)
+
+Use `MonitorLog` (cmd 0x38) to poll controller state without side effects. This does not modify anything on the controller.
+
+```go
+ct, _ := s4a.NewController("10.254.33.10:65534")
+defer ct.Close()
+
+ct.RefreshInfo(ctx)
+info := ct.Info()
+fmt.Printf("serial=%s fw=%s auth=%d logs=%d\n",
+    info.SerialNum, info.FirmwareVer, info.AuthCount, info.LogCount)
+```
+
+You can also discover controllers by listening for heartbeats:
+
+```go
+controllers, _ := s4a.Discover(ctx, 5*time.Second)
+for _, c := range controllers {
+    fmt.Println(c.String())
+}
+```
+
+### Step 3: Add authorizations (additive, non-destructive)
+
+`Authorize` adds a new card record to the controller. It does not remove or modify existing records. This is safe to run alongside the existing S4A software.
+
+```go
+right := &s4a.AuthRight{
+    CardLow:    9876543210,
+    BeginDate:  s4a.BCDDateEncode(2025, 1, 1),
+    EndDate:    s4a.BCDDateEncode(2030, 12, 31),
+    EndTime:    s4a.BCDTimeEncode(23, 59, 58),
+    ReaderMask: 0xFF,
+    RemainCount: 0xFFFF,
+}
+client.Authorize(ctx, right)
+```
+
+### Operations that are destructive
+
+These modify controller state and can disrupt access if misused:
+
+| Operation               | Risk                                                                                       | Mitigation                                             |
+| ----------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------ |
+| `RevokeAuth`            | Removes a card from the controller. Person loses access immediately.                       | Verify card number before revoking.                    |
+| `ClearAuth`             | Deletes **all** card records from the controller. Everyone loses access until re-uploaded. | Never run on production without a backup.              |
+| `ClearLogs`             | Erases all stored swipe logs.                                                              | Download logs first with MonitorLog.                   |
+| `Restart`               | Reboots the controller. Doors are unmanaged during reboot.                                 | Only during maintenance windows.                       |
+| `SetIP` / `SetReportIP` | Changes the controller's network config. You can lose connectivity permanently.            | Note current settings first; have serial/USB fallback. |
+| `SetOptions`            | Changes controller behavior options (e.g., disables heartbeat, changes door logic).        | Understand each option bit before changing.            |
+| `OpenDoor`              | Physically unlocks a door.                                                                 | Confirm door number; mind the duration parameter.      |
+
+### Coexistence with the Windows S4A software
+
+The S4A Windows software and this library both speak the same protocol, but they cannot both receive events on port 50000 simultaneously:
+
+- **If the Windows software is running:** It owns port 50000. You can still send commands to `controller:65534` from Go (both can send commands, and the controller will respond to whichever port sent the request). But you will not receive heartbeat or swipe events.
+- **To fully replace the Windows software:** Stop it, then start your Go listener on port 50000. Update `ReportIP`/`ReportPort` on each controller if the server IP changed.
+- **To run alongside it:** Use a different machine or port, and accept that only one application receives the real-time event stream. Use `MonitorLog` (polling) from Go to compensate for missed events.
+
+### Compatibility checklist
+
+Before deploying, verify:
+
+1. **Controller model** -- This library implements the JL-IDD-Z4 protocol (S4A ACB-001, ACB-002, ACB-004 and compatible OEM controllers). Other models may use different commands or frame formats.
+2. **Firmware version** -- Use `Discover` or `MonitorLog` to read the firmware version. Older firmware may not support all text commands.
+3. **Network mode** -- Check whether the controller is in UDP, TCP Client, or TCP Server mode. TCP Client is most common. If the controller is in TCP Client mode, it is already connecting to the Windows software on port 50000; your Go app needs to take over that listener.
+4. **Option bits** -- The controller's behavior is governed by 32+ option flags (e.g., option 05 enables async log reporting, option 08 enables heartbeat). Changing these can alter door behavior. Always read current settings before modifying.
+5. **Card database backup** -- Before running `ClearAuth` or `RevokeAuth`, use `QueryAuth` to back up the existing card database.
+
 ### Typical Deployment Flow
 
 1. **Discover controllers**
