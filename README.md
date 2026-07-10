@@ -96,13 +96,13 @@ sequenceDiagram
 
 **Key point:** The controller makes the access decision locally. It checks its stored authorization database (up to 50,000 cards). If the card is valid, it opens the door and reports the swipe to the server. If the card is invalid, it still reports the swipe with an error code (e.g., code 4 = no permission).
 
-The server never sees the swipe before the controller has already acted. This is why the S4A Windows software has "upload" and "download" buttons:
+The server never sees the swipe before the controller has already acted. The core workflow is:
 
 - **Upload (Authorize):** Push card records to the controller's local database so it can grant or deny access at the door. Without uploading, the card is not on the controller and access will be denied.
-- **Download (Monitor/Log):** Pull stored swipe records from the controller's flash memory. This catches up on any events the server missed while offline.
-- **Events (real-time stream):** The controller pushes each swipe as it happens. This is for live monitoring, but it is ephemeral -- if the server is down or the network drops, those events are lost. Download fills the gap.
+- **Download (Monitor/Log):** Pull stored swipe records from the controller's flash memory. This is how you get the authoritative log of all activity.
+- **Events (real-time stream):** The controller pushes each swipe as it happens. Useful for live monitoring ("Console > Monitor" in the S4A software), but secondary -- the real data comes from download. Events are ephemeral and lost if the server is offline.
 
-In summary: **upload** writes to the controller, **download** reads from it, and **events** are a best-effort real-time notification.
+In summary: **upload** writes to the controller, **download** reads from it, and **events** are a best-effort notification for live dashboards.
 
 ### Event Types
 
