@@ -57,18 +57,18 @@ All other events have an 8-byte RptCmdHead:
 [c8] [type 1B] [dataLen 2B BE] [seq 4B LE] [payload NB]
 ```
 
-| Type | Name                   | Payload format             |
-| ---- | ---------------------- | -------------------------- | ----------- | -------------- | ----------- | ---- | ----------- | ------ |
-| 1    | General event          | Pipe-delimited             |
-| 2    | Card swipe (async log) | Pipe-delimited             |
-| 3    | ID card                | 14+256+1024+1 bytes binary |
-| 4    | Heartbeat              | Pipe-delimited: flag       | timeout_cfg | timeout_remain | timeout_cnt | name | global_flag | fw_ver |
-| 5    | Debug                  | Pipe-delimited             |
-| 6    | Signal change          | Pipe-delimited: prev;curr  | flag        | time           | config1..8  | name | peer_addr   |
-| 7    | Operation log          | Pipe-delimited             |
-| 8    | Pull auth request      | Pipe-delimited             |
-| 9    | Auth change result     | Pipe-delimited             |
-| 10   | Get time               | Pipe-delimited             |
+| Type | Name                   | Payload format                                                              |
+| ---- | ---------------------- | --------------------------------------------------------------------------- |
+| 1    | General event          | `Pipe-delimited`                                                            |
+| 2    | Card swipe (async log) | `Pipe-delimited`                                                            |
+| 3    | ID card                | `14+256+1024+1 bytes binary`                                                |
+| 4    | Heartbeat              | `flag\|timeout_cfg\|timeout_remain\|timeout_cnt\|name\|global_flag\|fw_ver` |
+| 5    | Debug                  | `Pipe-delimited`                                                            |
+| 6    | Signal change          | `prev;curr\|flag\|time\|config1..8\|name\|peer_addr`                        |
+| 7    | Operation log          | `Pipe-delimited`                                                            |
+| 8    | Pull auth request      | `Pipe-delimited`                                                            |
+| 9    | Auth change result     | `Pipe-delimited`                                                            |
+| 10   | Get time               | `Pipe-delimited`                                                            |
 
 Heartbeat requires ACK (29 bytes). Async log records require ACK (37 bytes).
 
