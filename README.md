@@ -8,6 +8,228 @@ github.com/sonroyaalmerol/go-s4a
 
 Requires Go 1.26. MIT licensed.
 
+## How It Works
+
+A door access control system has three layers: **controllers** (hardware at each door), a **server** (your application), and **readers** (card scanners, keypads, ID readers wired to controllers).
+
+### Network Topology
+
+```
+┌─────────────────────────────────────────────────────┐
+│                    Server (your app)                │
+│                                                     │
+│  ┌─────────────────┐    ┌─────────────────────┐     │
+│  │  Event Listener  │    │    UDP/TCP Client    │     │
+│  │  :50000 (listen) │    │  → :65534 (send cmd) │     │
+│  └────────┬─────────┘    └──────────┬──────────┘     │
+└───────────┼─────────────────────────┼────────────────┘
+            │                         │
+    ┌───────┴─────────────────────────┴────────┐
+    │              LAN / WAN                    │
+    └───────┬─────────────────────────┬────────┘
+            │                         │
+   ┌────────┴────────┐       ┌────────┴────────┐
+   │  Controller #1   │       │  Controller #2   │
+   │  (10.254.33.10)  │       │  (10.254.33.11)  │
+   │                  │       │                  │
+   │  ┌──┐ ┌──┐ ┌──┐ │       │  ┌──┐ ┌──┐ ┌──┐ │
+   │  │R1│ │R2│ │R3│ │       │  │R1│ │R2│ │R3│ │
+   │  └──┘ └──┘ └──┘ │       │  └──┘ └──┘ └──┘ │
+   │  ═══Door 1═══    │       │  ═══Door 1═══    │
+   │  ═══Door 2═══    │       │  ═══Door 2═══    │
+   └──────────────────┘       └──────────────────┘
+```
+
+Each controller manages 1–4 doors and up to 8 readers (4 serial + 4 Wiegand). The controller is the decision maker — it verifies card authorizations locally against its stored card database.
+
+### Two-Channel Communication
+
+Controllers use **two ports** with distinct roles:
+
+| Channel  | Port  | Direction           | Purpose                                                      |
+| -------- | ----- | ------------------- | ------------------------------------------------------------ |
+| Events   | 50000 | Controller → Server | Real-time card swipes, heartbeat, signal changes, async logs |
+| Commands | 65534 | Server → Controller | Open door, authorize/revoke cards, set time, configure       |
+
+**Events (port 50000):** The controller actively pushes events to the server. The server listens on this port. This is the only way to receive card swipes in real time.
+
+**Commands (port 65534):** The server sends command frames and waits for a response. Each command has a sequence number for matching requests to responses.
+
+### Transport Modes
+
+| Mode       | How it works                                                                                                                              | When to use                                     |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| UDP        | Server sends commands to controller:65534; controller sends events to server:50000. No connection state.                                  | Simple LAN deployments, low controller count    |
+| TCP Client | Controller initiates TCP connection to server:50000 and keeps it open. All events and command responses flow over this single connection. | Most common — NAT-friendly, maintains heartbeat |
+| TCP Server | Server connects to controller:50000. Rare, requires controller to have a fixed IP.                                                        | Unusual setups                                  |
+
+For TCP, each message is prefixed with a 4-byte big-endian length header. The binary frame format is identical across all transports.
+
+### What Happens When Someone Swipes a Card
+
+```
+  Reader          Controller              Server
+    │                 │                      │
+    │  card data      │                      │
+    │────────────────>│                      │
+    │                 │                      │
+    │                 │  check local auth DB │
+    │                 │  (24-byte xRight)   │
+    │                 │                      │
+    │                 │  decision: allow     │
+    │                 │──────────────────────>│
+    │                 │  swipe event         │  Event (port 50000)
+    │                 │  (pipe-delimited)   │  parse with ParseEvent()
+    │                 │                      │
+    │                 │  open relay          │
+    │<────────────────│                      │
+    │  door unlocks   │                      │
+    │                 │                      │
+```
+
+**Key point:** The controller makes the access decision locally. It checks its stored authorization database (up to 50,000 cards). If the card is valid, it opens the door and reports the swipe to the server. If the card is invalid, it still reports the swipe with an error code (e.g., code 4 = no permission).
+
+The server never sees the swipe before the controller has already acted. This means:
+
+- **Card authorizations must be uploaded to controllers** before they take effect (`Authorize` command)
+- **Revocations must be pushed** to remove access (`RevokeAuth` command)
+- The event stream is for **monitoring and logging**, not for making real-time access decisions
+
+### Event Types
+
+The controller pushes 10 event types to the server on port 50000:
+
+| Type | Name                   | When it fires                             | Format                        |
+| ---- | ---------------------- | ----------------------------------------- | ----------------------------- | ----------- | -------------- | ------- | ---- | ----------- | ------- |
+| 1    | General event          | Misc controller events                    | Pipe-delimited                |
+| 2    | Card swipe (async log) | Historical log record                     | Pipe-delimited                |
+| 3    | ID card                | National ID card read                     | 14B + 256B text + 1024B photo |
+| 4    | Heartbeat              | Periodic (configurable, every ~30s)       | `flag                         | timeout_cfg | timeout_remain | count   | name | global_flag | fw_ver` |
+| 5    | Debug                  | Debug info                                | Pipe-delimited                |
+| 6    | Signal change          | Input terminal state change               | `prev;curr                    | flag        | time           | cfg1..8 | name | addr`       |
+| 7    | Operation log          | Operator action log                       | Pipe-delimited                |
+| 8    | Pull auth request      | Controller requests auth data from server | Pipe-delimited                |
+| 9    | Auth result            | Result of pushed authorization            | Pipe-delimited                |
+| 10   | Get time               | Controller asks server for time           | Pipe-delimited                |
+
+Real-time card swipes (type not in RptCmdHead) arrive as raw pipe-delimited strings without the 8-byte header.
+
+### Heartbeat and Discovery
+
+Controllers with **option 08** (network connection detection) enabled periodically broadcast heartbeat packets. These serve two purposes:
+
+1. **Keep-alive:** Tells the server the controller is online
+2. **Discovery:** New servers can discover controllers by listening for heartbeats
+
+The server must respond with a **Heartbeat ACK** (29 bytes) to confirm the connection is alive. Without ACKs, the controller may assume the server is down and attempt to reconnect.
+
+### Authorization Lifecycle
+
+```
+ Server                                  Controller
+   │                                        │
+   │  Authorize (cmd 0x12, 24-byte xRight) │
+   │───────────────────────────────────────>│
+   │                                        │  store in local DB
+   │  Response (cmd 0x13, result byte)     │
+   │<───────────────────────────────────────│
+   │                                        │
+   │  ... card is now valid on controller   │
+   │                                        │
+   │  Revoke (cmd 0x14, 8-byte card#)      │
+   │───────────────────────────────────────>│
+   │                                        │  remove from DB
+   │  Response (cmd 0x15, result byte)     │
+   │<───────────────────────────────────────│
+```
+
+Each authorization (xRight) defines:
+
+- **Which card** (CardHigh + CardLow, or use isName bit for name-based auth)
+- **When it's valid** (BeginDate/Time → EndDate/Time, BCD encoded)
+- **Which readers** (ReaderMask bitmask: 0xFF = all 8 readers)
+- **Which time zones** (TimeZone bitmask: 0 = any time, or combine zones 2–8)
+- **How many uses** (RemainCount: 0xFFFF = unlimited, 1–59999 = count, 60000+ = directional)
+- **Person attributes** (Group, Position, PersonType — for filtering)
+- **Flags** (Anti-passback, debt, package, etc.)
+
+### Log Retrieval
+
+Controllers store swipe logs locally. The server pulls them with **Monitor/Log** (cmd 0x38):
+
+```
+ Server                                  Controller
+   │                                        │
+   │  MonitorLog (cmd 0x38, index=0)       │
+   │───────────────────────────────────────>│
+   │                                        │
+   │  Response (48 bytes):                  │
+   │    LogSeq, LogDetail, LogCount,       │
+   │    AuthCount, CurrentTime,             │
+   │    ReaderRelay, DeviceFlag              │
+   │<───────────────────────────────────────│
+   │                                        │
+   │  MonitorLog (cmd 0x38, index=1)       │
+   │───────────────────────────────────────>│
+   │                                        │
+   │  ... increment index until             │
+   │    LogHigh=0 && LogLow=0               │
+   │<───────────────────────────────────────│
+```
+
+Use index 0 for the latest record, then increment. When `LogHigh == 0 && LogLow == 0`, there are no more records.
+
+### Async Log Reporting (HTTP/WebSocket)
+
+Beyond the binary protocol, controllers can also push logs via **HTTP GET** requests or **WebSocket** when option 38 or 53 is enabled:
+
+- **HTTP mode:** Controller sends `GET /dr/?d=...` to a configured web server. The server responds with text commands like `open1=300` or `heartbeatAck=1`.
+- **WebSocket mode:** Controller maintains a persistent WS connection. Messages use the same format as HTTP GET parameters.
+
+This SDK focuses on the binary TCP/UDP protocol. For HTTP/WebSocket integration, see `PROTOCOL.md` (doc 2) for the full reference.
+
+### Special Card Numbers
+
+The controller reserves these card numbers for special events — they cannot be used for normal IC/ID cards:
+
+| Card Number        | Meaning                                               |
+| ------------------ | ----------------------------------------------------- |
+| < 255              | Reserved for event codes                              |
+| 666666             | Simulated swipe (triggered by signal config)          |
+| 7777777            | Gate timeout (person didn't pass through after swipe) |
+| 111111111111111110 | Wildcard — grants access to all national ID cards     |
+
+### Typical Deployment Flow
+
+```
+1. Discover controllers
+   controllers, _ := s4a.Discover(ctx, 5*time.Second)
+
+2. Configure each controller
+   tc := s4a.NewTextCommand().
+       SetIP("10.254.33.10").
+       SetMask("255.255.255.0").
+       SetGateway("10.254.33.1").
+       SetIPMode(s4a.IPModeTCPClient).
+       SetReportIP("10.254.33.14").
+       SetReportPort(50000).
+       SetName("FrontDoor")
+   // send via text command frame (cmd 0x94)
+
+3. Upload authorizations
+   right := &s4a.AuthRight{...}
+   client.Authorize(ctx, right)
+
+4. Start event listener
+   listener.ListenEvents(ctx, handler)
+
+5. Handle events — log swipes, send alerts, enforce business rules
+
+6. Periodically sync time and pull logs
+   ct.SyncTime(ctx)
+   ct.RefreshInfo(ctx)  // MonitorLog(0) for status
+```
+
 ## Protocol
 
 UDP binary protocol on two ports:
