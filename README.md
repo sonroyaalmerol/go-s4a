@@ -99,10 +99,10 @@ sequenceDiagram
 The server never sees the swipe before the controller has already acted. The core workflow is:
 
 - **Upload (Authorize):** Push card records to the controller's local database so it can grant or deny access at the door. Without uploading, the card is not on the controller and access will be denied.
-- **Download (Monitor/Log):** Pull stored swipe records from the controller's flash memory. This is how you get the authoritative log of all activity.
-- **Events (real-time stream):** The controller pushes each swipe as it happens. Useful for live monitoring ("Console > Monitor" in the S4A software), but secondary -- the real data comes from download. Events are ephemeral and lost if the server is offline.
+- **Download (Monitor/Log):** Pull stored swipe records from the controller's flash memory. The S4A Windows software uses this as the primary way to collect logs -- it is reliable and catches up on anything missed while offline.
+- **Events (real-time stream):** The controller pushes each swipe as it happens. These contain the same (actually richer) data as the download records, including card data strings, device names, and chip info. But events are ephemeral -- lost if the server is offline. The S4A software uses these only for the "Console > Monitor" live view.
 
-In summary: **upload** writes to the controller, **download** reads from it, and **events** are a best-effort notification for live dashboards.
+In short: **upload** writes to the controller, **download** is the reliable log source, and **events** are a live feed for real-time dashboards.
 
 ### Event Types
 
@@ -165,11 +165,13 @@ Each authorization (xRight) defines:
 
 Controllers store every swipe in flash memory (up to 50,000 records). The server pulls them with **Monitor/Log** (cmd 0x38):
 
-This is the "download" operation in the S4A Windows software. You need it because:
+Download is the reliable way to collect logs. Use it to:
 
-- The real-time event stream is best-effort; events are lost if the server is offline
-- Logs persist on the controller until overwritten, so you can catch up later
-- Monitor/Log also returns the current auth count, log count, and controller time
+- Catch up on swipes that happened while the server was offline
+- Get an authoritative count of stored records (auth count, log count)
+- Poll the controller status (time, reader/relay state, device serial)
+
+The real-time event stream provides the same data (actually richer, with card strings and chip info), but is ephemeral. Download persists on the controller until overwritten.
 
 ```mermaid
 sequenceDiagram
