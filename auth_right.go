@@ -7,6 +7,43 @@ import (
 
 const RemainUnlimited uint16 = 0xFFFF
 
+type Schedule uint8
+
+const (
+	ScheduleAny Schedule = 0
+	Schedule2   Schedule = 1 << 1
+	Schedule3   Schedule = 1 << 2
+	Schedule4   Schedule = 1 << 3
+	Schedule5   Schedule = 1 << 4
+	Schedule6   Schedule = 1 << 5
+	Schedule7   Schedule = 1 << 6
+	Schedule8   Schedule = 1 << 7
+)
+
+type Readers uint8
+
+const (
+	Reader1       Readers = 1 << 0
+	Reader2       Readers = 1 << 1
+	Reader3       Readers = 1 << 2
+	Reader4       Readers = 1 << 3
+	Reader5       Readers = 1 << 4
+	Reader6       Readers = 1 << 5
+	Reader7       Readers = 1 << 6
+	Reader8       Readers = 1 << 7
+	AllReaders    Readers = 0xFF
+)
+
+func NewReaders(readers ...int) Readers {
+	var m Readers
+	for _, r := range readers {
+		if r >= 1 && r <= 8 {
+			m |= 1 << (r - 1)
+		}
+	}
+	return m
+}
+
 func DirectionalRemain(entry, exit int) uint16 {
 	return uint16(60000 + entry*100 + exit)
 }
@@ -15,8 +52,8 @@ type AuthRight struct {
 	CardNumber  uint64
 	ValidFrom   time.Time
 	ValidUntil  time.Time
-	TimeZone    uint8
-	ReaderMask  uint8
+	Schedule    Schedule
+	Readers  Readers
 	RemainCount uint16
 
 	IsName       bool
@@ -51,8 +88,8 @@ func (a *AuthRight) AppendBinary(b []byte) ([]byte, error) {
 	binary.LittleEndian.PutUint16(b[off+10:off+12], BCDTimeEncode(a.ValidFrom.Hour(), a.ValidFrom.Minute(), a.ValidFrom.Second()))
 	binary.LittleEndian.PutUint16(b[off+12:off+14], BCDDateEncode(a.ValidUntil.Year(), a.ValidUntil.Month(), a.ValidUntil.Day()))
 	binary.LittleEndian.PutUint16(b[off+14:off+16], BCDTimeEncode(a.ValidUntil.Hour(), a.ValidUntil.Minute(), a.ValidUntil.Second()))
-	b[off+16] = a.TimeZone
-	b[off+17] = a.ReaderMask
+	b[off+16] = byte(a.Schedule)
+	b[off+17] = byte(a.Readers)
 	binary.LittleEndian.PutUint16(b[off+18:off+20], a.RemainCount)
 	flags := uint16(0)
 	if a.IsName {
@@ -98,8 +135,8 @@ func (a *AuthRight) UnmarshalBinary(data []byte) error {
 	yr, mo, dy = BCDDateDecode(endDate)
 	hr, mi, se = BCDTimeDecode(endTime)
 	a.ValidUntil = time.Date(yr, mo, dy, hr, mi, se, 0, time.Local)
-	a.TimeZone = data[16]
-	a.ReaderMask = data[17]
+	a.Schedule = Schedule(data[16])
+	a.Readers = Readers(data[17])
 	a.RemainCount = binary.LittleEndian.Uint16(data[18:20])
 	bits := binary.LittleEndian.Uint32(data[20:24])
 	flags := uint16(bits & 0xffff)

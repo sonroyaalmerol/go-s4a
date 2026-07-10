@@ -48,7 +48,7 @@ func TestParseQueryAuthResponse(t *testing.T) {
 		CardNumber:  0x12345678,
 		ValidFrom:   time.Date(2025, 1, 15, 0, 0, 0, 0, time.Local),
 		ValidUntil:  time.Date(2030, 12, 31, 23, 59, 58, 0, time.Local),
-		ReaderMask:  0xFF,
+		Readers:  AllReaders,
 		RemainCount: RemainUnlimited,
 	}
 	data, _ := right.AppendBinary(nil)
@@ -57,7 +57,7 @@ func TestParseQueryAuthResponse(t *testing.T) {
 		DeviceID: 0xFFFF,
 		Seq:      8,
 		Cmd:      CmdQueryAuthResp,
-		Result:   ResultSuccess,
+		Result:   byte(ResultSuccess),
 		Data:     data,
 	}
 	parsed, err := ParseQueryAuthResponse(f)
@@ -70,7 +70,7 @@ func TestParseQueryAuthResponse(t *testing.T) {
 }
 
 func TestParseQueryAuthResponseWrongCmd(t *testing.T) {
-	f := &Frame{Cmd: 0x10, Result: ResultSuccess}
+	f := &Frame{Cmd: 0x10, Result: byte(ResultSuccess)}
 	_, err := ParseQueryAuthResponse(f)
 	if err == nil {
 		t.Error("expected error for wrong command")
@@ -78,14 +78,14 @@ func TestParseQueryAuthResponseWrongCmd(t *testing.T) {
 }
 
 func TestParseTextCommandResponse(t *testing.T) {
-	f := &Frame{Preamble: respPreamble, DeviceID: 0xFFFF, Seq: 8, Cmd: CmdTextCommandResp, Result: ResultSuccess}
+	f := &Frame{Preamble: respPreamble, DeviceID: 0xFFFF, Seq: 8, Cmd: CmdTextCommandResp, Result: byte(ResultSuccess)}
 	if err := ParseTextCommandResponse(f); err != nil {
 		t.Fatalf("ParseTextCommandResponse: %v", err)
 	}
 }
 
 func TestParseTextCommandResponseWrongCmd(t *testing.T) {
-	f := &Frame{Cmd: 0x10, Result: ResultSuccess}
+	f := &Frame{Cmd: 0x10, Result: byte(ResultSuccess)}
 	if err := ParseTextCommandResponse(f); err == nil {
 		t.Error("expected error for wrong command")
 	}
@@ -202,7 +202,7 @@ func TestAuthorizeRequestKnownVector(t *testing.T) {
 		CardNumber:  0x499602D2,
 		ValidFrom:   time.Date(0x20bf, 4, 16, 0, 0, 0, 0, time.Local),
 		ValidUntil:  time.Date(0x3c21, 1, 1, 23, 59, 58, 0, time.Local),
-		ReaderMask:  0xFF,
+		Readers:  AllReaders,
 		RemainCount: RemainUnlimited,
 	}
 	f := NewAuthorizeRequest(0x6833, 4, right)
@@ -224,7 +224,7 @@ func TestMonitorLogResponseFullParse(t *testing.T) {
 	}
 	f := &Frame{
 		Preamble: respPreamble, DeviceID: 0xFFFF, Seq: 8,
-		Cmd: CmdMonitorLogResp, Result: ResultSuccess, Data: data,
+		Cmd: CmdMonitorLogResp, Result: byte(ResultSuccess), Data: data,
 	}
 	resp, err := ParseMonitorLogResponse(f)
 	if err != nil {
@@ -266,7 +266,7 @@ func TestAuthRightBitFields(t *testing.T) {
 		CardNumber:  0x499602D2,
 		ValidFrom:   time.Date(2025, 1, 15, 0, 0, 0, 0, time.Local),
 		ValidUntil:  time.Date(2030, 12, 31, 23, 59, 58, 0, time.Local),
-		ReaderMask:  0xFF,
+		Readers:  AllReaders,
 		RemainCount: RemainUnlimited,
 		Group:       5,
 		Position:    2,
@@ -447,5 +447,59 @@ func TestEventHelpers(t *testing.T) {
 	}
 	if tm.Year() != 2015 || tm.Month() != 4 || tm.Day() != 30 {
 		t.Errorf("Time(): got %v", tm)
+	}
+}
+
+func TestReadersConstants(t *testing.T) {
+	if Reader1 != Readers(1<<0) {
+		t.Errorf("Reader1: got %d, want %d", Reader1, Readers(1<<0))
+	}
+	if Reader2 != Readers(1<<1) {
+		t.Errorf("Reader2: got %d, want %d", Reader2, Readers(1<<1))
+	}
+	if Reader3 != Readers(1<<2) {
+		t.Errorf("Reader3: got %d, want %d", Reader3, Readers(1<<2))
+	}
+	if Reader4 != Readers(1<<3) {
+		t.Errorf("Reader4: got %d, want %d", Reader4, Readers(1<<3))
+	}
+	if Reader5 != Readers(1<<4) {
+		t.Errorf("Reader5: got %d, want %d", Reader5, Readers(1<<4))
+	}
+	if Reader6 != Readers(1<<5) {
+		t.Errorf("Reader6: got %d, want %d", Reader6, Readers(1<<5))
+	}
+	if Reader7 != Readers(1<<6) {
+		t.Errorf("Reader7: got %d, want %d", Reader7, Readers(1<<6))
+	}
+	if Reader8 != Readers(1<<7) {
+		t.Errorf("Reader8: got %d, want %d", Reader8, Readers(1<<7))
+	}
+	if AllReaders != Readers(0xFF) {
+		t.Errorf("AllReaders: got %d, want %d", AllReaders, Readers(0xFF))
+	}
+	all := Reader1 | Reader2 | Reader3 | Reader4 | Reader5 | Reader6 | Reader7 | Reader8
+	if all != AllReaders {
+		t.Errorf("all readers OR'd: got %d, want %d", all, AllReaders)
+	}
+}
+
+func TestNewReaders(t *testing.T) {
+	m := NewReaders(1, 3, 5)
+	want := Reader1 | Reader3 | Reader5
+	if m != want {
+		t.Errorf("NewReaders(1,3,5): got %d, want %d", m, want)
+	}
+	m = NewReaders()
+	if m != 0 {
+		t.Errorf("NewReaders(): got %d, want 0", m)
+	}
+	m = NewReaders(1, 2, 3, 4, 5, 6, 7, 8)
+	if m != AllReaders {
+		t.Errorf("NewReaders(1-8): got %d, want %d", m, AllReaders)
+	}
+	m = NewReaders(9, 0, -1)
+	if m != 0 {
+		t.Errorf("NewReaders(out of range): got %d, want 0", m)
 	}
 }

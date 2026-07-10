@@ -1,5 +1,51 @@
 package s4a
 
+type ResultCode uint8
+
+const (
+	ResultSuccess          ResultCode = 0
+	ResultScheduleError    ResultCode = 2
+	ResultExceededLimit    ResultCode = 3
+	ResultNoPermission     ResultCode = 4
+	ResultReaderError      ResultCode = 5
+	ResultExpired          ResultCode = 6
+	ResultWorkModeDisabled ResultCode = 7
+	ResultInternalError    ResultCode = 8
+	ResultDecodeFailed     ResultCode = 9
+	ResultGateTimeout      ResultCode = 10
+	ResultAntiPassback     ResultCode = 11
+	ResultNotSupported     ResultCode = 12
+	ResultUnknownError     ResultCode = 13
+	ResultFailed           ResultCode = 14
+	ResultNotRegistered    ResultCode = 16
+	ResultPasswordError    ResultCode = 17
+	ResultInvalidSyncType  ResultCode = 18
+	ResultInvalidSyncFmt   ResultCode = 19
+	ResultSyncDataLimit    ResultCode = 20
+	ResultInvalidSyncSeq   ResultCode = 21
+	ResultNetUnknown       ResultCode = 22
+	ResultNetDisconnected  ResultCode = 23
+	ResultNetRestored      ResultCode = 24
+	ResultNetRebootDevice  ResultCode = 25
+	ResultNetRebootChip    ResultCode = 26
+	ResultAntiCollision    ResultCode = 27
+	ResultManualLock       ResultCode = 28
+	ResultInterlock        ResultCode = 29
+	ResultCardRWFailed     ResultCode = 30
+	ResultGroupIDError     ResultCode = 31
+	ResultSystemStatus     ResultCode = 32
+	ResultBlacklist        ResultCode = 33
+	ResultStorageError     ResultCode = 34
+	ResultNotAuthorized    ResultCode = 35
+	ResultTooManyInside    ResultCode = 36
+	ResultAgeRestriction   ResultCode = 37
+	ResultIDExpired        ResultCode = 38
+)
+
+func (c ResultCode) String() string {
+	return ControllerErrorCode(uint8(c))
+}
+
 func ControllerErrorCode(code uint8) string {
 	switch code {
 	case 0:

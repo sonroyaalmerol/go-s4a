@@ -36,7 +36,7 @@ func TestFrameMarshalRoundTrip(t *testing.T) {
 		CardNumber:  0x12345678,
 		ValidFrom:   time.Date(2025, 1, 15, 0, 0, 0, 0, time.Local),
 		ValidUntil:  time.Date(2030, 12, 31, 23, 59, 58, 0, time.Local),
-		ReaderMask:  0xFF,
+		Readers:  AllReaders,
 		RemainCount: RemainUnlimited,
 	}
 
@@ -59,8 +59,8 @@ func TestFrameMarshalRoundTrip(t *testing.T) {
 	if authRight.CardNumber != 0x12345678 {
 		t.Errorf("CardNumber: expected 0x12345678, got 0x%08x", authRight.CardNumber)
 	}
-	if authRight.ReaderMask != 0xFF {
-		t.Errorf("ReaderMask: expected 0xFF, got 0x%02x", authRight.ReaderMask)
+	if authRight.Readers != AllReaders {
+		t.Errorf("Readers: expected AllReaders, got %v", authRight.Readers)
 	}
 }
 
@@ -220,7 +220,7 @@ func TestMonitorLogResponseParsing(t *testing.T) {
 		DeviceID: 0xFFFF,
 		Seq:      8,
 		Cmd:      CmdMonitorLogResp,
-		Result:   ResultSuccess,
+		Result:   byte(ResultSuccess),
 		Data:     data,
 	}
 

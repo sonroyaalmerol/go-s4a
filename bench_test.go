@@ -54,7 +54,7 @@ func BenchmarkFrameAppendBinaryAuthorize(b *testing.B) {
 		CardNumber:  0x12345678,
 		ValidFrom:   time.Date(2025, 1, 15, 0, 0, 0, 0, time.Local),
 		ValidUntil:  time.Date(2030, 12, 31, 23, 59, 58, 0, time.Local),
-		ReaderMask:  0xFF,
+		Readers:  0xFF,
 		RemainCount: RemainUnlimited,
 	}
 	f := NewAuthorizeRequest(0xFFFF, 1, right)
@@ -84,7 +84,7 @@ func BenchmarkAuthRightAppendBinary(b *testing.B) {
 		CardNumber:  0x12345678,
 		ValidFrom:   time.Date(2025, 1, 15, 0, 0, 0, 0, time.Local),
 		ValidUntil:  time.Date(2030, 12, 31, 23, 59, 58, 0, time.Local),
-		ReaderMask:  0xFF,
+		Readers:  0xFF,
 		RemainCount: RemainUnlimited,
 	}
 	buf := make([]byte, 0, 24)
@@ -100,7 +100,7 @@ func BenchmarkAuthRightUnmarshalBinary(b *testing.B) {
 		CardNumber:  0x12345678,
 		ValidFrom:   time.Date(2025, 1, 15, 0, 0, 0, 0, time.Local),
 		ValidUntil:  time.Date(2030, 12, 31, 23, 59, 58, 0, time.Local),
-		ReaderMask:  0xFF,
+		Readers:  0xFF,
 		RemainCount: RemainUnlimited,
 	}
 	raw, _ := right.AppendBinary(nil)

@@ -41,8 +41,6 @@ const (
 	CmdTextCommandResp byte = 0x95
 )
 
-const ResultSuccess byte = 0x01
-
 const FrameOverhead = 24 + 2 + 2 + 1 + 1 + 2 + 1
 
 func FrameSize(dataLen int) int { return FrameOverhead + dataLen }

@@ -60,8 +60,8 @@ func ParseOpenDoorResponse(f *Frame) error {
 	if f.Cmd != CmdOpenDoorResp {
 		return fmt.Errorf("%w: expected cmd 0x11, got 0x%02x", ErrInvalidResponse, f.Cmd)
 	}
-	if f.Result != ResultSuccess {
-		return fmt.Errorf("%w: result 0x%02x", ErrCommandFailed, f.Result)
+	if f.Result != byte(ResultSuccess) {
+		return fmt.Errorf("%w: result %s", ErrCommandFailed, ResultCode(f.Result))
 	}
 	return nil
 }
@@ -75,8 +75,8 @@ func ParseAuthorizeResponse(f *Frame) error {
 	if f.Cmd != CmdAuthorizeResp {
 		return fmt.Errorf("%w: expected cmd 0x13, got 0x%02x", ErrInvalidResponse, f.Cmd)
 	}
-	if f.Result != ResultSuccess {
-		return fmt.Errorf("%w: result 0x%02x", ErrCommandFailed, f.Result)
+	if f.Result != byte(ResultSuccess) {
+		return fmt.Errorf("%w: result %s", ErrCommandFailed, ResultCode(f.Result))
 	}
 	return nil
 }
@@ -92,8 +92,8 @@ func ParseRevokeAuthResponse(f *Frame) error {
 	if f.Cmd != CmdRevokeAuthResp {
 		return fmt.Errorf("%w: expected cmd 0x15, got 0x%02x", ErrInvalidResponse, f.Cmd)
 	}
-	if f.Result != ResultSuccess {
-		return fmt.Errorf("%w: result 0x%02x", ErrCommandFailed, f.Result)
+	if f.Result != byte(ResultSuccess) {
+		return fmt.Errorf("%w: result %s", ErrCommandFailed, ResultCode(f.Result))
 	}
 	return nil
 }
@@ -106,8 +106,8 @@ func ParseClearAuthResponse(f *Frame) error {
 	if f.Cmd != CmdClearAuthResp {
 		return fmt.Errorf("%w: expected cmd 0x19, got 0x%02x", ErrInvalidResponse, f.Cmd)
 	}
-	if f.Result != ResultSuccess {
-		return fmt.Errorf("%w: result 0x%02x", ErrCommandFailed, f.Result)
+	if f.Result != byte(ResultSuccess) {
+		return fmt.Errorf("%w: result %s", ErrCommandFailed, ResultCode(f.Result))
 	}
 	return nil
 }
@@ -140,8 +140,8 @@ func ParseMonitorLogResponse(f *Frame) (*MonitorLogResponse, error) {
 	if f.Cmd != CmdMonitorLogResp {
 		return nil, fmt.Errorf("%w: expected cmd 0x39, got 0x%02x", ErrInvalidResponse, f.Cmd)
 	}
-	if f.Result != ResultSuccess {
-		return nil, fmt.Errorf("%w: result 0x%02x", ErrCommandFailed, f.Result)
+	if f.Result != byte(ResultSuccess) {
+		return nil, fmt.Errorf("%w: result %s", ErrCommandFailed, ResultCode(f.Result))
 	}
 	d := f.Data
 	if len(d) < 48 {
@@ -174,8 +174,8 @@ func ParseSetTimeResponse(f *Frame) error {
 	if f.Cmd != CmdSetTimeResp {
 		return fmt.Errorf("%w: expected cmd 0x27, got 0x%02x", ErrInvalidResponse, f.Cmd)
 	}
-	if f.Result != ResultSuccess {
-		return fmt.Errorf("%w: result 0x%02x", ErrCommandFailed, f.Result)
+	if f.Result != byte(ResultSuccess) {
+		return fmt.Errorf("%w: result %s", ErrCommandFailed, ResultCode(f.Result))
 	}
 	return nil
 }
@@ -184,8 +184,8 @@ func ParseQueryAuthResponse(f *Frame) (*AuthRight, error) {
 	if f.Cmd != CmdQueryAuthResp {
 		return nil, fmt.Errorf("%w: expected cmd 0x35, got 0x%02x", ErrInvalidResponse, f.Cmd)
 	}
-	if f.Result != ResultSuccess {
-		return nil, fmt.Errorf("%w: result 0x%02x", ErrCommandFailed, f.Result)
+	if f.Result != byte(ResultSuccess) {
+		return nil, fmt.Errorf("%w: result %s", ErrCommandFailed, ResultCode(f.Result))
 	}
 	var ar AuthRight
 	if err := ar.UnmarshalBinary(f.Data); err != nil {
@@ -198,8 +198,8 @@ func ParseTextCommandResponse(f *Frame) error {
 	if f.Cmd != CmdTextCommandResp {
 		return fmt.Errorf("%w: expected cmd 0x95, got 0x%02x", ErrInvalidResponse, f.Cmd)
 	}
-	if f.Result != ResultSuccess {
-		return fmt.Errorf("%w: result 0x%02x", ErrCommandFailed, f.Result)
+	if f.Result != byte(ResultSuccess) {
+		return fmt.Errorf("%w: result %s", ErrCommandFailed, ResultCode(f.Result))
 	}
 	return nil
 }

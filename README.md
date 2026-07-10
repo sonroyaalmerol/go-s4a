@@ -155,8 +155,8 @@ Each authorization (xRight) defines:
 
 - **Which card** (CardNumber, or use IsName flag for name-based auth)
 - **When it's valid** (ValidFrom → ValidUntil, as Go time.Time values)
-- **Which readers** (ReaderMask bitmask: 0xFF = all 8 readers)
-- **Which time zones** (TimeZone bitmask: 0 = any time, or combine zones 2-8)
+- **Which readers** (Readers bitmask: use AllReaders for all 8 readers, or combine Reader1..Reader8, or call NewReaders(1,3,5))
+- **Which time zones** (Schedule bitmask: use ScheduleAny for unrestricted, or combine Schedule2..Schedule8)
 - **How many uses** (RemainCount: RemainUnlimited for unlimited, 1-59999 = count, DirectionalRemain(entry, exit) for directional)
 - **Person attributes** (Group, Position, PersonType -- for filtering)
 - **Flags** (Anti-passback, debt, package, etc.)
@@ -263,7 +263,7 @@ right := &s4a.AuthRight{
     CardNumber:  9876543210,
     ValidFrom:   time.Date(2025, 1, 1, 0, 0, 0, 0, time.Local),
     ValidUntil:  time.Date(2030, 12, 31, 23, 59, 58, 0, time.Local),
-    ReaderMask: 0xFF,
+    Readers: s4a.AllReaders,
     RemainCount: s4a.RemainUnlimited,
 }
 client.Authorize(ctx, right)
@@ -425,7 +425,7 @@ right := &s4a.AuthRight{
     CardNumber:     1234567890,
     ValidFrom:      time.Date(2025, 1, 1, 0, 0, 0, 0, time.Local),
     ValidUntil:     time.Date(2030, 12, 31, 23, 59, 58, 0, time.Local),
-    ReaderMask:     0xFF,
+    Readers: s4a.AllReaders,
     RemainCount:    s4a.RemainUnlimited,
 }
 client.Authorize(ctx, right)
@@ -539,7 +539,8 @@ right := &s4a.AuthRight{
     CardNumber:  1234567890,       // single uint64 instead of CardHigh+CardLow
     ValidFrom:   time.Date(2025, 1, 1, 0, 0, 0, 0, time.Local),
     ValidUntil:  time.Date(2030, 12, 31, 23, 59, 58, 0, time.Local),
-    ReaderMask: 0xFF,              // all readers
+    Schedule:    s4a.ScheduleAny,      // unrestricted daily schedule
+    Readers:     s4a.AllReaders,      // all readers
     RemainCount: s4a.RemainUnlimited, // unlimited uses
     IsName:      false,            // use card number, not name
     AntiPassback: false,           // no anti-passback
@@ -558,8 +559,8 @@ Wire format for reference:
 10      2     BeginTime     BCD time, activation start
 12      2     EndDate       BCD date, activation end
 14      2     EndTime       BCD time, activation end
-16      1     TimeZone      0=any, bitmask for 8 zones
-17      1     ReaderMask    255=all, bitmask for readers 1-8
+16      1     Schedule      0=any, bitmask for 8 zones
+17      1     Readers       255=all, bitmask for readers 1-8
 18      2     RemainCount   65535=unlimited, 1-59999=count, 60000+=directional
 20      2     Flags         Bit: isName, hasAntiback, etc.
 22      1     Group/Pos/Type Bits 0-2=group, 3-4=position, 5-7=person type
@@ -717,9 +718,9 @@ right := &s4a.AuthRight{
     CardNumber:     1234567890,
     ValidFrom:      time.Date(2025, 1, 1, 0, 0, 0, 0, time.Local),
     ValidUntil:     time.Date(2030, 12, 31, 23, 59, 58, 0, time.Local),
-    ReaderMask:     0xFF,               // all readers
+    Readers: s4a.AllReaders,               // all readers
     RemainCount:    s4a.RemainUnlimited, // unlimited
-    TimeZone:       0,                  // any time
+    Schedule:      s4a.ScheduleAny,          // any time
 }
 client.Authorize(ctx, right)
 ```
@@ -737,7 +738,7 @@ newRight := &s4a.AuthRight{
     CardNumber:  9876543210,
     ValidFrom:   time.Date(2025, 1, 1, 0, 0, 0, 0, time.Local),
     ValidUntil:  time.Date(2030, 12, 31, 23, 59, 58, 0, time.Local),
-    ReaderMask:  0xFF,
+    Readers: s4a.AllReaders,
     RemainCount: s4a.RemainUnlimited,
 }
 client.Authorize(ctx, newRight)
@@ -753,8 +754,8 @@ right := &s4a.AuthRight{
     CardNumber:  1234567890,
     ValidFrom:   time.Date(2025, 1, 1, 8, 30, 0, 0, time.Local),
     ValidUntil:  time.Date(2025, 12, 31, 17, 30, 0, 0, time.Local),
-    TimeZone:    2,  // timezone 2 (user-defined in config tool)
-    ReaderMask:  0xFF,
+    Schedule:    s4a.Schedule2,  // schedule zone 2 (configured on controller)
+    Readers: s4a.AllReaders,
     RemainCount: s4a.RemainUnlimited,
 }
 client.Authorize(ctx, right)
@@ -770,7 +771,7 @@ right := &s4a.AuthRight{
     CardNumber:   1234567890,
     ValidFrom:    time.Date(2025, 1, 1, 0, 0, 0, 0, time.Local),
     ValidUntil:   time.Date(2030, 12, 31, 23, 59, 58, 0, time.Local),
-    ReaderMask:   0xFF,
+    Readers: s4a.AllReaders,
     RemainCount:  s4a.RemainUnlimited,
     AntiPassback: true,  // enable anti-passback
 }
@@ -943,7 +944,7 @@ for _, line := range strings.Split(strings.TrimSpace(string(cards)), "\n") {
         CardNumber:  cardNumber,
         ValidFrom:   time.Date(2025, 1, 1, 0, 0, 0, 0, time.Local),
         ValidUntil:  time.Date(2030, 12, 31, 23, 59, 58, 0, time.Local),
-        ReaderMask:  0xFF,
+        Readers: s4a.AllReaders,
         RemainCount: s4a.RemainUnlimited,
     }
     if err := client.Authorize(ctx, right); err != nil {
