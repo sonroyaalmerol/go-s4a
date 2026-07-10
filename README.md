@@ -153,11 +153,11 @@ sequenceDiagram
 
 Each authorization (xRight) defines:
 
-- **Which card** (CardHigh + CardLow, or use isName bit for name-based auth)
-- **When it's valid** (BeginDate/Time → EndDate/Time, BCD encoded)
+- **Which card** (CardNumber, or use IsName flag for name-based auth)
+- **When it's valid** (ValidFrom → ValidUntil, as Go time.Time values)
 - **Which readers** (ReaderMask bitmask: 0xFF = all 8 readers)
 - **Which time zones** (TimeZone bitmask: 0 = any time, or combine zones 2-8)
-- **How many uses** (RemainCount: 0xFFFF = unlimited, 1-59999 = count, 60000+ = directional)
+- **How many uses** (RemainCount: RemainUnlimited for unlimited, 1-59999 = count, DirectionalRemain(entry, exit) for directional)
 - **Person attributes** (Group, Position, PersonType -- for filtering)
 - **Flags** (Anti-passback, debt, package, etc.)
 
@@ -178,13 +178,13 @@ sequenceDiagram
     participant S as Server
     participant C as Controller
     S->>C: MonitorLog (cmd 0x38, index=0)
-    C->>S: Response (48 bytes): LogSeq, LogDetail, LogCount, AuthCount, CurrentTime, ReaderRelay, DeviceFlag
+    C->>S: Response (48 bytes): LogSeq, Log, LogCount, AuthCount, CurrentTime, ReaderRelay, SerialNum
     S->>C: MonitorLog (cmd 0x38, index=1)
     C->>S: Response ...
-    Note over S,C: increment index until LogHigh=0 and LogLow=0
+    Note over S,C: increment index until Log.CardNumber == 0
 ```
 
-Use index 0 for the latest record, then increment. When `LogHigh == 0 && LogLow == 0`, there are no more records.
+Use index 0 for the latest record, then increment. When `Log.CardNumber == 0`, there are no more records.
 
 ### Async Log Reporting (HTTP/WebSocket)
 
@@ -260,12 +260,11 @@ for _, c := range controllers {
 
 ```go
 right := &s4a.AuthRight{
-    CardLow:    9876543210,
-    BeginDate:  s4a.BCDDateEncode(2025, 1, 1),
-    EndDate:    s4a.BCDDateEncode(2030, 12, 31),
-    EndTime:    s4a.BCDTimeEncode(23, 59, 58),
+    CardNumber:  9876543210,
+    ValidFrom:   time.Date(2025, 1, 1, 0, 0, 0, 0, time.Local),
+    ValidUntil:  time.Date(2030, 12, 31, 23, 59, 58, 0, time.Local),
     ReaderMask: 0xFF,
-    RemainCount: 0xFFFF,
+    RemainCount: s4a.RemainUnlimited,
 }
 client.Authorize(ctx, right)
 ```
@@ -419,16 +418,15 @@ client, _ := s4a.NewClient("10.254.33.10:65534")
 defer client.Close()
 
 // Open door 1 for 3 seconds
-client.OpenDoor(ctx, 1, 300)
+client.OpenDoor(ctx, 1, 3*time.Second)
 
 // Add a card with 24/7 access to all readers
 right := &s4a.AuthRight{
-    CardLow:     1234567890,
-    BeginDate:   s4a.BCDDateEncode(2025, 1, 1),
-    EndDate:     s4a.BCDDateEncode(2030, 12, 31),
-    EndTime:     s4a.BCDTimeEncode(23, 59, 58),
-    ReaderMask:  0xFF,
-    RemainCount: 0xFFFF,
+    CardNumber:     1234567890,
+    ValidFrom:      time.Date(2025, 1, 1, 0, 0, 0, 0, time.Local),
+    ValidUntil:     time.Date(2030, 12, 31, 23, 59, 58, 0, time.Local),
+    ReaderMask:     0xFF,
+    RemainCount:    s4a.RemainUnlimited,
 }
 client.Authorize(ctx, right)
 ```
@@ -463,7 +461,7 @@ fmt.Printf("device %s, fw %s, %d cards, %d records\n",
     info.SerialNum, info.FirmwareVer, info.AuthCount, info.LogCount)
 
 ct.SyncTime(ctx)
-ct.OpenDoor(ctx, 1, 300)
+ct.OpenDoor(ctx, 1, 3*time.Second)
 ```
 
 ### Multi-controller system (inter-lock, multi-card, first-card-open)
@@ -503,27 +501,57 @@ Discovery listens on port 50000 for heartbeat broadcasts. Controllers must have 
 
 ### Special relay control
 
-Duration field is in 10ms units. Special values control relay state:
+The duration parameter uses `time.Duration` (e.g., `3*time.Second`, `500*time.Millisecond`). Duration of 0 means "use the controller's default". For special relay control, use `ControlDoor`:
 
 ```go
-client.OpenDoor(ctx, 1, s4a.OpenDoorRestoreAuto) // restore normal control
-client.OpenDoor(ctx, 1, s4a.OpenDoorKeepOpen)    // relay disconnected until restored
-client.OpenDoor(ctx, 1, s4a.OpenDoorKeepClosed)   // relay connected until restored
+client.ControlDoor(ctx, 1, s4a.RestoreAuto)  // restore normal control
+client.ControlDoor(ctx, 1, s4a.KeepOpen)     // relay disconnected until restored
+client.ControlDoor(ctx, 1, s4a.KeepClosed)   // relay connected until restored
+client.ControlDoor(ctx, 1, s4a.PulseClose)   // pulse close relay
+client.ControlDoor(ctx, 1, s4a.PulseOpen)    // pulse open relay
 ```
 
-### BCD date/time encoding
+### Date/time encoding
+
+The library handles BCD encoding internally. Use `time.Time` values directly:
 
 ```go
-// Date: (year-2000)*512 + month*32 + day
-// Time: hour*2048 + minute*32 + second/2
+right := &s4a.AuthRight{
+    ValidFrom:  time.Date(2025, 1, 1, 0, 0, 0, 0, time.Local),
+    ValidUntil: time.Date(2030, 12, 31, 23, 59, 58, 0, time.Local),
+    // ...
+}
+```
+
+For low-level access, BCD encode/decode functions are still available:
+
+```go
 date := s4a.BCDDateEncode(2025, 6, 15)  // 0x324f
 time := s4a.BCDTimeEncode(14, 30, 0)     // 0x3c40
 ```
 
 ## Authorization structure (24 bytes)
 
+The `AuthRight` struct maps to the 24-byte wire format. Use Go-native types:
+
+```go
+right := &s4a.AuthRight{
+    CardNumber:  1234567890,       // single uint64 instead of CardHigh+CardLow
+    ValidFrom:   time.Date(2025, 1, 1, 0, 0, 0, 0, time.Local),
+    ValidUntil:  time.Date(2030, 12, 31, 23, 59, 58, 0, time.Local),
+    ReaderMask: 0xFF,              // all readers
+    RemainCount: s4a.RemainUnlimited, // unlimited uses
+    IsName:      false,            // use card number, not name
+    AntiPassback: false,           // no anti-passback
+    Group:       0,                // person group (0-7)
+    Position:    0,                // person position (0-3)
+    PersonType:  0,                // person type (0-15)
+}
 ```
-Offset  Size  Field        Description
+
+Wire format for reference:
+
+```Size Field        Description
 0       4     CardHigh      Card number high word (LE), 0 for standard IC cards
 4       4     CardLow       Card number low word (LE)
 8       2     BeginDate     BCD date, activation start
@@ -540,8 +568,24 @@ Offset  Size  Field        Description
 
 ## Log entry structure (16 bytes)
 
+The `LogEntry` struct parses the 16-byte xLog wire format into Go-native types:
+
+```go
+entry.CardNumber    // uint64, combined from CardHigh+CardLow
+entry.Date          // time.Time
+entry.Door          // 1-4
+entry.Reader        // 1-8
+entry.Result        // error code (use entry.ResultDescription())
+entry.Direction     // s4a.DirEntry, s4a.DirExit, or s4a.DirUnknown
+entry.LogType       // s4a.LogTypeSwipe, s4a.LogTypeEvent, etc.
+entry.SubType       // sub-type bits
+entry.IsName        // bool
+entry.ExtReader     // extended reader bits
 ```
-Offset  Size  Field        Description
+
+Wire format for reference:
+
+```Size Field        Description
 0       4     CardHigh      Card number high word (LE)
 4       4     CardLow       Card number low word (LE)
 8       2     Date          BCD date
@@ -549,20 +593,33 @@ Offset  Size  Field        Description
 12      1     Door/Reader   Bits 0-2=door (1-4), bits 3-7=reader (1-4 serial, 5-8 Wiegand)
 13      1     Result        Error code (0=success, 4=no permission, etc.)
 14      1     Dir/Type      Bits 0-1=direction (1=in, 2=out), bits 2-7=type (1=event, 2=card, 3=op)
-15      1     SubType/Ext   Bits 0-4=subtype, bits 5-6=ext reader
+15      1     SubType/Ext   Bits 0=isName, bits 1-5=subtype, bits 6-7=ext reader
 ```
 
 ## Monitor/log response structure (48 bytes)
 
+The `MonitorLogResponse` struct parses the 48-byte response into Go-native types:
+
+```go
+resp.LogSeq       // current record index
+resp.Log          // s4a.LogEntry (parsed from bytes 4-19)
+resp.LogCount     // total log records
+resp.AuthCount    // total authorizations
+resp.CurrentTime  // time.Time
+resp.ReaderRelay  // reader/relay state (raw bytes)
+resp.SerialNum    // device serial number (string)
 ```
-Offset  Size  Field        Description
+
+Wire format for reference:
+
+```Size Field        Description
 0       4     LogSeq        Current record index
 4       16    LogDetail     16-byte xLog structure (see above)
 20      4     LogCount      Total log records
 24      4     AuthCount     Total authorizations
 28      7     CurrentTime   BCD: year-2000, month, day, hour, minute, second, weekday
 35      8     ReaderRelay   Reader direction and relay state
-43      5     DeviceFlag    ASCII device serial number
+43      5     SerialNum     ASCII device serial number
 ```
 
 ## Error codes
@@ -640,15 +697,15 @@ client, _ := s4a.NewClient("10.254.33.10:65534")
 defer client.Close()
 
 // Door 1, 3 seconds
-client.OpenDoor(ctx, 1, 300)
+client.OpenDoor(ctx, 1, 3*time.Second)
 
 // Door 2, 500ms (turnstile)
-client.OpenDoor(ctx, 2, 50)
+client.OpenDoor(ctx, 2, 500*time.Millisecond)
 
 // Keep door unlocked indefinitely
-client.OpenDoor(ctx, 1, s4a.OpenDoorKeepOpen)
+client.ControlDoor(ctx, 1, s4a.KeepOpen)
 // Restore normal operation
-client.OpenDoor(ctx, 1, s4a.OpenDoorRestoreAuto)
+client.ControlDoor(ctx, 1, s4a.RestoreAuto)
 ```
 
 ### Add a Card
@@ -657,14 +714,12 @@ S4A software: Configuration > Personnel > Add user, then Configuration > Access 
 
 ```go
 right := &s4a.AuthRight{
-    CardLow:     1234567890,
-    BeginDate:   s4a.BCDDateEncode(2025, 1, 1),
-    EndDate:     s4a.BCDDateEncode(2030, 12, 31),
-    EndTime:     s4a.BCDTimeEncode(23, 59, 58),
-    ReaderMask:  0xFF,       // all readers
-    RemainCount: 0xFFFF,     // unlimited
-    TimeZone:    0,          // any time
-    Flags:       0,          // no anti-passback
+    CardNumber:     1234567890,
+    ValidFrom:      time.Date(2025, 1, 1, 0, 0, 0, 0, time.Local),
+    ValidUntil:     time.Date(2030, 12, 31, 23, 59, 58, 0, time.Local),
+    ReaderMask:     0xFF,               // all readers
+    RemainCount:    s4a.RemainUnlimited, // unlimited
+    TimeZone:       0,                  // any time
 }
 client.Authorize(ctx, right)
 ```
@@ -675,16 +730,15 @@ S4A software: Configuration > Personnel > Card Lost
 
 ```go
 // Revoke the lost card
-client.RevokeAuth(ctx, 0, 1234567890)
+client.RevokeAuth(ctx, 1234567890)
 
 // Issue a new card
 newRight := &s4a.AuthRight{
-    CardLow:     9876543210,
-    BeginDate:   s4a.BCDDateEncode(2025, 1, 1),
-    EndDate:     s4a.BCDDateEncode(2030, 12, 31),
-    EndTime:     s4a.BCDTimeEncode(23, 59, 58),
+    CardNumber:  9876543210,
+    ValidFrom:   time.Date(2025, 1, 1, 0, 0, 0, 0, time.Local),
+    ValidUntil:  time.Date(2030, 12, 31, 23, 59, 58, 0, time.Local),
     ReaderMask:  0xFF,
-    RemainCount: 0xFFFF,
+    RemainCount: s4a.RemainUnlimited,
 }
 client.Authorize(ctx, newRight)
 ```
@@ -696,14 +750,12 @@ S4A software: Configuration > Time Profile > Assign to user
 ```go
 // Mon-Fri 08:30-17:30, no weekends
 right := &s4a.AuthRight{
-    CardLow:     1234567890,
-    BeginDate:   s4a.BCDDateEncode(2025, 1, 1),
-    BeginTime:   s4a.BCDTimeEncode(8, 30, 0),
-    EndDate:     s4a.BCDDateEncode(2025, 12, 31),
-    EndTime:     s4a.BCDTimeEncode(17, 30, 0),
+    CardNumber:  1234567890,
+    ValidFrom:   time.Date(2025, 1, 1, 8, 30, 0, 0, time.Local),
+    ValidUntil:  time.Date(2025, 12, 31, 17, 30, 0, 0, time.Local),
     TimeZone:    2,  // timezone 2 (user-defined in config tool)
     ReaderMask:  0xFF,
-    RemainCount: 0xFFFF,
+    RemainCount: s4a.RemainUnlimited,
 }
 client.Authorize(ctx, right)
 ```
@@ -715,13 +767,12 @@ S4A software: Configuration > Anti-passback
 ```go
 // Set the anti-passback bit in the authorization flags
 right := &s4a.AuthRight{
-    CardLow:     1234567890,
-    BeginDate:   s4a.BCDDateEncode(2025, 1, 1),
-    EndDate:     s4a.BCDDateEncode(2030, 12, 31),
-    EndTime:     s4a.BCDTimeEncode(23, 59, 58),
-    ReaderMask:  0xFF,
-    RemainCount: 0xFFFF,
-    Flags:       0x40,  // hasAntiback bit set
+    CardNumber:   1234567890,
+    ValidFrom:    time.Date(2025, 1, 1, 0, 0, 0, 0, time.Local),
+    ValidUntil:   time.Date(2030, 12, 31, 23, 59, 58, 0, time.Local),
+    ReaderMask:   0xFF,
+    RemainCount:  s4a.RemainUnlimited,
+    AntiPassback: true,  // enable anti-passback
 }
 client.Authorize(ctx, right)
 ```
@@ -739,7 +790,7 @@ listener.ListenEvents(ctx, func(evt *s4a.Event) error {
     case s4a.EventTypeCardSwipe:
         fmt.Printf("[%s] card=%s door=%s reader=%s result=%s dir=%s\n",
             evt.SwipeTime, evt.CardData, evt.DoorNo,
-            evt.ReaderNo, evt.Result, evt.Direction)
+            evt.ReaderNo, evt.Result, evt.DirectionStr)
     case s4a.EventTypeHeartbeat:
         fmt.Printf("[heartbeat] controller=%s fw=%s\n",
             evt.HBControllerFlag, evt.HBFirmwareVersion)
@@ -763,15 +814,14 @@ for {
     if err != nil {
         break
     }
-    if resp.LogHigh == 0 && resp.LogLow == 0 {
+    if resp.Log.CardNumber == 0 {
         break // no more records
     }
     // Process the log entry
-    var entry s4a.LogEntry
-    entry.UnmarshalBinary(rawLogBytes(resp))
+    entry := resp.Log
     fmt.Printf("[%s] card=%d door=%d reader=%d result=%s\n",
-        entry.Date, entry.CardNumber(), entry.Door, entry.Reader,
-        s4a.ControllerErrorCode(entry.Result))
+        entry.Date, entry.CardNumber, entry.Door, entry.Reader,
+        entry.ResultDescription())
     index++
 }
 ```
@@ -800,7 +850,7 @@ S4A software: Operation > Console > Adjust Time
 ct.SyncTime(ctx)
 
 // Or set manually via text command
-tc := s4a.NewTextCommand().SetTime(2025, 7, 9, 15, 30, 0, 3)
+tc := s4a.NewTextCommand().SetTime(time.Date(2025, 7, 9, 15, 30, 0, 0, time.Local))
 f := tc.BuildFrame(s4a.DefaultDeviceID, seq)
 client.sendAndWait(ctx, f)
 ```
@@ -822,7 +872,7 @@ sys.AddController(ct2)
 sys.EnableInterlock("10.254.33.10:65534", 1, "10.254.33.11:65534", 1)
 
 // Open via system to enforce inter-lock
-err := sys.OpenDoor(ctx, "10.254.33.10:65534", 1, 300)
+err := sys.OpenDoor(ctx, "10.254.33.10:65534", 1, 3*time.Second)
 if err != nil {
     fmt.Println("blocked:", err) // blocked if ct2's door 1 is open
 }
@@ -888,14 +938,13 @@ S4A software: Configuration > Access Privilege > full upload
 // Read card numbers from a file, one per line
 cards, _ := os.ReadFile("cards.txt")
 for _, line := range strings.Split(strings.TrimSpace(string(cards)), "\n") {
-    cardLow, _ := strconv.ParseUint(line, 10, 32)
+    cardNumber, _ := strconv.ParseUint(line, 10, 64)
     right := &s4a.AuthRight{
-        CardLow:     uint32(cardLow),
-        BeginDate:   s4a.BCDDateEncode(2025, 1, 1),
-        EndDate:     s4a.BCDDateEncode(2030, 12, 31),
-        EndTime:     s4a.BCDTimeEncode(23, 59, 58),
+        CardNumber:  cardNumber,
+        ValidFrom:   time.Date(2025, 1, 1, 0, 0, 0, 0, time.Local),
+        ValidUntil:  time.Date(2030, 12, 31, 23, 59, 58, 0, time.Local),
         ReaderMask:  0xFF,
-        RemainCount: 0xFFFF,
+        RemainCount: s4a.RemainUnlimited,
     }
     if err := client.Authorize(ctx, right); err != nil {
         log.Printf("failed to authorize %d: %v", cardLow, err)
