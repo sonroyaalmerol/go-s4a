@@ -96,11 +96,13 @@ sequenceDiagram
 
 **Key point:** The controller makes the access decision locally. It checks its stored authorization database (up to 50,000 cards). If the card is valid, it opens the door and reports the swipe to the server. If the card is invalid, it still reports the swipe with an error code (e.g., code 4 = no permission).
 
-The server never sees the swipe before the controller has already acted. This means:
+The server never sees the swipe before the controller has already acted. This is why the S4A Windows software has "upload" and "download" buttons:
 
-- **Card authorizations must be uploaded to controllers** before they take effect (`Authorize` command)
-- **Revocations must be pushed** to remove access (`RevokeAuth` command)
-- The event stream is for **monitoring and logging**, not for making real-time access decisions
+- **Upload (Authorize):** Push card records to the controller's local database so it can grant or deny access at the door. Without uploading, the card is not on the controller and access will be denied.
+- **Download (Monitor/Log):** Pull stored swipe records from the controller's flash memory. This catches up on any events the server missed while offline.
+- **Events (real-time stream):** The controller pushes each swipe as it happens. This is for live monitoring, but it is ephemeral -- if the server is down or the network drops, those events are lost. Download fills the gap.
+
+In summary: **upload** writes to the controller, **download** reads from it, and **events** are a best-effort real-time notification.
 
 ### Event Types
 
@@ -159,9 +161,15 @@ Each authorization (xRight) defines:
 - **Person attributes** (Group, Position, PersonType -- for filtering)
 - **Flags** (Anti-passback, debt, package, etc.)
 
-### Log Retrieval
+### Log Retrieval (Download)
 
-Controllers store swipe logs locally. The server pulls them with **Monitor/Log** (cmd 0x38):
+Controllers store every swipe in flash memory (up to 50,000 records). The server pulls them with **Monitor/Log** (cmd 0x38):
+
+This is the "download" operation in the S4A Windows software. You need it because:
+
+- The real-time event stream is best-effort; events are lost if the server is offline
+- Logs persist on the controller until overwritten, so you can catch up later
+- Monitor/Log also returns the current auth count, log count, and controller time
 
 ```mermaid
 sequenceDiagram
