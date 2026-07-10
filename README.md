@@ -173,6 +173,8 @@ Download is the reliable way to collect logs. Use it to:
 
 The real-time event stream provides the same data (actually richer, with card strings and chip info), but is ephemeral. Download persists on the controller until overwritten.
 
+For production use, prefer `LogReader` over raw `MonitorLog`. It handles sequential downloading, position tracking, and provides both a Go scanner API and `io.Reader` for piping JSON to stdout, syslog, or files. See [Download Swipe Records](#download-swipe-records) for examples.
+
 ```mermaid
 sequenceDiagram
     participant S as Server
@@ -634,6 +636,61 @@ Wire format for reference:
 43      5     SerialNum     ASCII device serial number
 ```
 
+## LogReader (reliable log download)
+
+`LogReader` provides reliable, sequential access to controller logs. It downloads entries via the MonitorLog command (cmd 0x38), which is more reliable than real-time UDP events.
+
+```go
+type LogRecord struct {
+    CardNumber uint64    // decoded card number
+    Door       uint8     // door number (1-4)
+    Reader     uint8     // reader number (1-8)
+    Direction  string    // "Entry", "Exit", or "Unknown"
+    Time       time.Time // when the event occurred
+    Result     uint8     // error code
+    ResultDesc string    // human-readable result ("Success", "No permission", etc.)
+    LogType    string    // "Card swipe", "Event", "Operation"
+    IsName     bool      // true if card number is a name lookup
+    Seq        uint32    // log sequence number
+}
+```
+
+**Scanner pattern:**
+
+```go
+reader := s4a.NewLogReader(s4a.LogReaderConfig{Client: client})
+for reader.Next(ctx) {
+    rec := reader.Record()
+    // use rec.CardNumber, rec.Door, rec.ResultDesc, etc.
+}
+if err := reader.Err(); err != nil {
+    log.Fatal(err)
+}
+```
+
+**io.Reader (JSON lines):**
+
+```go
+reader := s4a.NewLogReader(s4a.LogReaderConfig{Client: client})
+io.Copy(os.Stdout, reader)  // or syslog, file, network
+```
+
+**io.WriterTo:**
+
+```go
+reader := s4a.NewLogReader(s4a.LogReaderConfig{Client: client})
+reader.WriteTo(os.Stdout)   // or any io.Writer
+```
+
+**Position persistence:**
+
+```go
+reader.Save(file)    // write current seq number
+reader.Restore(file) // resume from saved seq number
+reader.SeekSeq(42)   // or set seq directly
+reader.Seq()          // get current seq
+```
+
 ## Error codes
 
 Use typed `ResultCode` constants for readable error handling:
@@ -841,24 +898,77 @@ listener.ListenEvents(ctx, func(evt *s4a.Event) error {
 
 S4A software: Operation > Console > Download, then Operation > Query Swipe Records
 
+The `LogReader` provides reliable, sequential access to controller logs via the download mechanism (cmd 0x38). It implements both the scanner pattern and `io.Reader` for piping to stdout, syslog, or files.
+
+**Scanner pattern (structured access):**
+
 ```go
-// Poll logs starting from index 1
-index := uint32(1)
-for {
-    resp, err := client.MonitorLog(ctx, index)
-    if err != nil {
-        break
-    }
-    if resp.Log.CardNumber == 0 {
-        break // no more records
-    }
-    // Process the log entry
-    entry := resp.Log
-    fmt.Printf("[%s] card=%d door=%d reader=%d result=%s\n",
-        entry.Date, entry.CardNumber, entry.Door, entry.Reader,
-        entry.ResultDescription())
-    index++
+reader := s4a.NewLogReader(s4a.LogReaderConfig{
+    Client: client,
+})
+for reader.Next(ctx) {
+    rec := reader.Record()
+    slog.Info("access",
+        "card", rec.CardNumber,
+        "door", rec.Door,
+        "reader", rec.Reader,
+        "direction", rec.Direction,
+        "result", rec.ResultDesc,
+        "time", rec.Time,
+    )
 }
+if err := reader.Err(); err != nil {
+    log.Fatal(err)
+}
+```
+
+**Pipe JSON to stdout:**
+
+```go
+reader := s4a.NewLogReader(s4a.LogReaderConfig{Client: client})
+io.Copy(os.Stdout, reader)
+// outputs newline-delimited JSON, one record per line
+```
+
+**Write to any io.Writer:**
+
+```go
+reader := s4a.NewLogReader(s4a.LogReaderConfig{Client: client})
+reader.WriteTo(os.Stdout)  // or syslog, file, network connection
+```
+
+**Resume from saved position:**
+
+```go
+reader := s4a.NewLogReader(s4a.LogReaderConfig{Client: client})
+
+// Restore last position
+f, _ := os.Open("lastseq.txt")
+reader.Restore(f)
+f.Close()
+
+for reader.Next(ctx) {
+    rec := reader.Record()
+    // process rec...
+}
+
+// Save position for next run
+w, _ := os.Create("lastseq.txt")
+reader.Save(w)
+w.Close()
+```
+
+**Low-level download (raw MonitorLog):**
+
+```go
+// Single log entry by index
+resp, err := client.MonitorLog(ctx, 1)
+if err != nil {
+    log.Fatal(err)
+}
+fmt.Printf("card=%d door=%d result=%s\n",
+    resp.Log.CardNumber, resp.Log.Door,
+    resp.Log.ResultDescription())
 ```
 
 ### Controller Info Check
