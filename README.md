@@ -53,11 +53,11 @@ Controllers use **two ports** with distinct roles:
 
 ### Transport Modes
 
-| Mode       | How it works                                                                                                                              | When to use                                     |
-| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
-| UDP        | Server sends commands to controller:65534; controller sends events to server:50000. No connection state.                                  | Simple LAN deployments, low controller count    |
+| Mode       | How it works                                                                                                                              | When to use                                      |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| UDP        | Server sends commands to controller:65534; controller sends events to server:50000. No connection state.                                  | Simple LAN deployments, low controller count     |
 | TCP Client | Controller initiates TCP connection to server:50000 and keeps it open. All events and command responses flow over this single connection. | Most common -- NAT-friendly, maintains heartbeat |
-| TCP Server | Server connects to controller:50000. Rare, requires controller to have a fixed IP.                                                        | Unusual setups                                  |
+| TCP Server | Server connects to controller:50000. Rare, requires controller to have a fixed IP.                                                        | Unusual setups                                   |
 
 For TCP, each message is prefixed with a 4-byte big-endian length header. The binary frame format is identical across all transports.
 
@@ -177,7 +177,7 @@ The controller reserves these card numbers for special events -- they cannot be 
 | < 255              | Reserved for event codes                              |
 | 666666             | Simulated swipe (triggered by signal config)          |
 | 7777777            | Gate timeout (person didn't pass through after swipe) |
-| 111111111111111110 | Wildcard -- grants access to all national ID cards     |
+| 111111111111111110 | Wildcard -- grants access to all national ID cards    |
 
 ### Typical Deployment Flow
 
@@ -444,28 +444,44 @@ Offset  Size  Field        Description
 
 ## Error codes
 
-0=Success, 2=Schedule error, 3=Exceeded limit, 4=No permission, 5=Reader error,
-6=Expired, 7=Work mode disabled, 8=Internal error, 9=Number decode failed,
-10=Gate timeout, 11=Anti-passback, 12=Not supported, 13=Unknown error, 14=Failed,
-16=Not registered/expired, 17=Password error, 18=Invalid sync type,
-19=Invalid sync message format, 20=Sync data limit, 21=Invalid sync data count,
-22=Network state unknown, 23=Network disconnected, 24=Network restored,
-25=Network check reboot device, 26=Network check reboot chip, 27=Anti-collision,
-28=Manual lock, 29=Multi-door interlock, 30=Card read/write failed,
-31=Group ID error, 32=System status detail, 33=Blacklist, 34=Storage error,
-35=Not authorized, 36=Too many people inside, 37=Age restriction, 38=ID expired.
+| Code | Meaning                | Code | Meaning                     |
+| ---- | ---------------------- | ---- | --------------------------- |
+| 0    | Success                | 19   | Invalid sync message format |
+| 2    | Schedule error         | 20   | Sync data limit             |
+| 3    | Exceeded limit         | 21   | Invalid sync data count     |
+| 4    | No permission          | 22   | Network state unknown       |
+| 5    | Reader error           | 23   | Network disconnected        |
+| 6    | Expired                | 24   | Network restored            |
+| 7    | Work mode disabled     | 25   | Network check reboot device |
+| 8    | Internal error         | 26   | Network check reboot chip   |
+| 9    | Number decode failed   | 27   | Anti-collision              |
+| 10   | Gate timeout           | 28   | Manual lock                 |
+| 11   | Anti-passback          | 29   | Multi-door interlock        |
+| 12   | Not supported          | 30   | Card read/write failed      |
+| 13   | Unknown error          | 31   | Group ID error              |
+| 14   | Failed                 | 32   | System status detail        |
+| 16   | Not registered/expired | 33   | Blacklist                   |
+| 17   | Password error         | 34   | Storage error               |
+| 18   | Invalid sync type      | 35   | Not authorized              |
+|      |                        | 36   | Too many people inside      |
+|      |                        | 37   | Age restriction             |
+|      |                        | 38   | ID expired                  |
 
 ## Protocol reference
 
-Full protocol documentation: `PROTOCOL.md`
+Full protocol documentation: [`PROTOCOL.md`](PROTOCOL.md)
 
-Source: JL-IDD-Z4 Integrated Access Controller Development Manual 3 (ykt1.cn)
+Source documentation (JL-IDD-Z4 Integrated Access Controller Development Manual):
+
+- [TCP/UDP binary protocol](http://www.ykt1.cn/news261.html)
+- [SDK and text commands](http://www.ykt1.cn/news259.html)
+- [HTTP/WebSocket protocol](http://www.ykt1.cn/news260.html)
+
 Applies to: S4A ACB-001, ACB-002, ACB-004 and compatible OEM controllers.
 
 ## S4A Software Feature Equivalents
 
-Every operation the Windows S4A Access Control software performs:
-https://github.com/sonroyaalmerol/go-s4a
+Every operation the Windows S4A Access Control software performs can be done with this SDK:
 
 ### Add Controller + Set IP
 
