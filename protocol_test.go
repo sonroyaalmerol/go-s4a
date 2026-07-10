@@ -503,3 +503,144 @@ func TestNewReaders(t *testing.T) {
 		t.Errorf("NewReaders(out of range): got %d, want 0", m)
 	}
 }
+
+func TestQueryAuth(t *testing.T) {
+	right := &AuthRight{
+		CardNumber:  0x499602D2,
+		ValidFrom:   time.Date(2025, 1, 15, 0, 0, 0, 0, time.Local),
+		ValidUntil:  time.Date(2030, 12, 31, 23, 59, 58, 0, time.Local),
+		Schedule:    ScheduleAny,
+		Readers:     AllReaders,
+		RemainCount: RemainUnlimited,
+	}
+	data, _ := right.AppendBinary(nil)
+	f := &Frame{
+		Preamble: respPreamble,
+		DeviceID: 0xFFFF,
+		Seq:      8,
+		Cmd:      CmdQueryAuthResp,
+		Result:   byte(ResultSuccess),
+		Data:     data,
+	}
+	parsed, err := ParseQueryAuthResponse(f)
+	if err != nil {
+		t.Fatalf("ParseQueryAuthResponse: %v", err)
+	}
+	if parsed.CardNumber != 0x499602D2 {
+		t.Errorf("CardNumber: got 0x%08x, want 0x%08x", parsed.CardNumber, 0x499602D2)
+	}
+	if parsed.Readers != AllReaders {
+		t.Errorf("Readers: got %d, want %d", parsed.Readers, AllReaders)
+	}
+	if parsed.Schedule != ScheduleAny {
+		t.Errorf("Schedule: got %d, want %d", parsed.Schedule, ScheduleAny)
+	}
+}
+
+func TestScheduleConstants(t *testing.T) {
+	if ScheduleAny != 0 {
+		t.Errorf("ScheduleAny: got %d, want 0", ScheduleAny)
+	}
+	if Schedule2 != 1<<1 {
+		t.Errorf("Schedule2: got %d, want %d", Schedule2, 1<<1)
+	}
+	if Schedule8 != 1<<7 {
+		t.Errorf("Schedule8: got %d, want %d", Schedule8, 1<<7)
+	}
+	combined := Schedule2 | Schedule3 | Schedule5
+	if combined != Schedule(1<<1|1<<2|1<<4) {
+		t.Errorf("combined schedules: got %d, want %d", combined, Schedule(1<<1|1<<2|1<<4))
+	}
+}
+
+func TestResultCodeString(t *testing.T) {
+	tests := []struct {
+		code   ResultCode
+		expect string
+	}{
+		{ResultSuccess, "Success"},
+		{ResultNoPermission, "No permission"},
+		{ResultAntiPassback, "Anti-passback"},
+		{ResultIDExpired, "ID expired"},
+	}
+	for _, tt := range tests {
+		if got := tt.code.String(); got != tt.expect {
+			t.Errorf("ResultCode(%d).String(): got %q, want %q", tt.code, got, tt.expect)
+		}
+	}
+}
+
+func TestEventTypeString(t *testing.T) {
+	tests := []struct {
+		typ    byte
+		expect string
+	}{
+		{EventTypeCardSwipe, "card_swipe"},
+		{EventTypeHeartbeat, "heartbeat"},
+		{EventTypeIDCard, "id_card"},
+		{EventTypeSignalChange, "signal_change"},
+		{EventTypeOpLog, "op_log"},
+		{99, "unknown(99)"},
+	}
+	for _, tt := range tests {
+		if got := EventTypeString(tt.typ); got != tt.expect {
+			t.Errorf("EventTypeString(%d): got %q, want %q", tt.typ, got, tt.expect)
+		}
+	}
+}
+
+func TestIDCardParsing(t *testing.T) {
+	prefix := make([]byte, 14)
+	for i := range prefix {
+		prefix[i] = 0xaa
+	}
+	unicodeData := make([]byte, 256)
+	for i := range unicodeData {
+		unicodeData[i] = 0x20 // space in UTF-16LE low byte
+	}
+	copy(unicodeData[0:2], []byte{0x41, 0x0}) // "A" in UTF-16LE
+	payload := append(prefix, unicodeData...)
+	payload = append(payload, []byte("WLftest")...)
+	raw := make([]byte, 8+len(payload))
+	raw[0] = rptHeaderMagic
+	raw[1] = EventTypeIDCard
+	raw[2] = byte(len(payload) >> 8)
+	raw[3] = byte(len(payload) & 0xff)
+	copy(raw[8:], payload)
+
+	evt, err := ParseEvent(raw)
+	if err != nil {
+		t.Fatalf("ParseEvent ID card: %v", err)
+	}
+	if evt.Type != EventTypeIDCard {
+		t.Errorf("Type: got %d, want %d", evt.Type, EventTypeIDCard)
+	}
+	if evt.IDCard == nil {
+		t.Fatal("IDCard should not be nil")
+	}
+}
+
+func TestAuthRightScheduleReaders(t *testing.T) {
+	right := &AuthRight{
+		CardNumber:  12345,
+		ValidFrom:   time.Date(2025, 1, 1, 0, 0, 0, 0, time.Local),
+		ValidUntil:  time.Date(2030, 12, 31, 23, 59, 58, 0, time.Local),
+		Schedule:    Schedule2 | Schedule3,
+		Readers:     Reader1 | Reader3 | Reader5,
+		RemainCount: RemainUnlimited,
+	}
+	data, err := right.AppendBinary(nil)
+	if err != nil {
+		t.Fatalf("AppendBinary: %v", err)
+	}
+	var parsed AuthRight
+	if err := parsed.UnmarshalBinary(data); err != nil {
+		t.Fatalf("UnmarshalBinary: %v", err)
+	}
+	if parsed.Schedule != Schedule2|Schedule3 {
+		t.Errorf("Schedule: got %d, want %d", parsed.Schedule, Schedule2|Schedule3)
+	}
+	if parsed.Readers != Reader1|Reader3|Reader5 {
+		t.Errorf("Readers: got %d, want %d", parsed.Readers, Reader1|Reader3|Reader5)
+	}
+}

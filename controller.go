@@ -150,6 +150,14 @@ func (ct *Controller) checkInterlock(door uint8) error {
 	return nil
 }
 
+func (ct *Controller) QueryAuth(ctx context.Context, position uint32) (*AuthRight, error) {
+	return ct.c.QueryAuth(ctx, position)
+}
+
+func (ct *Controller) SendTextCommand(ctx context.Context, tc *TextCommand) error {
+	return ct.c.SendTextCommand(ctx, tc)
+}
+
 func (ct *Controller) Client() *Client {
 	return ct.c
 }

@@ -320,7 +320,7 @@ Before deploying, verify:
        SetReportIP("10.254.33.14").
        SetReportPort(50000).
        SetName("FrontDoor")
-   // send via text command frame (cmd 0x94)
+   ct.SendTextCommand(ctx, tc)
    ```
 
 3. **Upload authorizations**
@@ -433,16 +433,27 @@ client.Authorize(ctx, right)
 
 ### Event listener
 
+All 10 event types are parsed. Use `s4a.EventTypeString(evt.Type)` for human-readable names:
+
 ```go
 listener, _ := s4a.NewEventListener(":50000")
 defer listener.Close()
 
 listener.ListenEvents(ctx, func(evt *s4a.Event) error {
+    fmt.Printf("event: %s\n", s4a.EventTypeString(evt.Type))
     switch evt.Type {
     case s4a.EventTypeCardSwipe:
-        fmt.Printf("card %s at door %s\n", evt.CardData, evt.DoorNo)
+        fmt.Printf("card %s at door %s, reader %s\n", evt.CardData, evt.DoorNo, evt.ReaderNo)
     case s4a.EventTypeHeartbeat:
-        // send HeartbeatACK back to controller
+        fmt.Printf("heartbeat from %s fw %s\n", evt.HBControllerFlag, evt.HBFirmwareVersion)
+    case s4a.EventTypeSignalChange:
+        fmt.Printf("signals %s -> %s\n", evt.SCPrevSignals, evt.SCCurrSignals)
+    case s4a.EventTypeIDCard:
+        if evt.IDCard != nil {
+            fmt.Printf("ID card: %s (%s)\n", evt.IDCard.Name, evt.IDCard.IDNumber)
+        }
+    case s4a.EventTypeOpLog, s4a.EventTypePullAuth, s4a.EventTypeAuthResult, s4a.EventTypeGetTime:
+        fmt.Printf("card %s result %s\n", evt.CardData, evt.Result)
     }
     return nil
 })
@@ -625,28 +636,53 @@ Wire format for reference:
 
 ## Error codes
 
-| Code | Meaning                | Code | Meaning                     |
-| ---- | ---------------------- | ---- | --------------------------- |
-| 0    | Success                | 19   | Invalid sync message format |
-| 2    | Schedule error         | 20   | Sync data limit             |
-| 3    | Exceeded limit         | 21   | Invalid sync data count     |
-| 4    | No permission          | 22   | Network state unknown       |
-| 5    | Reader error           | 23   | Network disconnected        |
-| 6    | Expired                | 24   | Network restored            |
-| 7    | Work mode disabled     | 25   | Network check reboot device |
-| 8    | Internal error         | 26   | Network check reboot chip   |
-| 9    | Number decode failed   | 27   | Anti-collision              |
-| 10   | Gate timeout           | 28   | Manual lock                 |
-| 11   | Anti-passback          | 29   | Multi-door interlock        |
-| 12   | Not supported          | 30   | Card read/write failed      |
-| 13   | Unknown error          | 31   | Group ID error              |
-| 14   | Failed                 | 32   | System status detail        |
-| 16   | Not registered/expired | 33   | Blacklist                   |
-| 17   | Password error         | 34   | Storage error               |
-| 18   | Invalid sync type      | 35   | Not authorized              |
-|      |                        | 36   | Too many people inside      |
-|      |                        | 37   | Age restriction             |
-|      |                        | 38   | ID expired                  |
+Use typed `ResultCode` constants for readable error handling:
+
+```go
+if resp.Result != byte(s4a.ResultSuccess) {
+    fmt.Printf("error: %s\n", s4a.ResultCode(resp.Result))
+}
+```
+
+| Constant               | Code | Meaning                     |
+| ---------------------- | ---- | --------------------------- |
+| ResultSuccess          | 0    | Success                     |
+| ResultScheduleError    | 2    | Schedule error              |
+| ResultExceededLimit    | 3    | Exceeded limit              |
+| ResultNoPermission     | 4    | No permission               |
+| ResultReaderError      | 5    | Reader error                |
+| ResultExpired          | 6    | Expired                     |
+| ResultWorkModeDisabled | 7    | Work mode disabled          |
+| ResultInternalError    | 8    | Internal error              |
+| ResultDecodeFailed     | 9    | Number decode failed        |
+| ResultGateTimeout      | 10   | Gate timeout                |
+| ResultAntiPassback     | 11   | Anti-passback               |
+| ResultNotSupported     | 12   | Not supported               |
+| ResultUnknownError     | 13   | Unknown error               |
+| ResultFailed           | 14   | Failed                      |
+| ResultNotRegistered    | 16   | Not registered / expired    |
+| ResultPasswordError    | 17   | Password error              |
+| ResultInvalidSyncType  | 18   | Invalid sync type           |
+| ResultInvalidSyncFmt   | 19   | Invalid sync message format |
+| ResultSyncDataLimit    | 20   | Sync data limit             |
+| ResultInvalidSyncSeq   | 21   | Invalid sync data count     |
+| ResultNetUnknown       | 22   | Network state unknown       |
+| ResultNetDisconnected  | 23   | Network disconnected        |
+| ResultNetRestored      | 24   | Network restored            |
+| ResultNetRebootDevice  | 25   | Network check reboot device |
+| ResultNetRebootChip    | 26   | Network check reboot chip   |
+| ResultAntiCollision    | 27   | Anti-collision              |
+| ResultManualLock       | 28   | Manual lock                 |
+| ResultInterlock        | 29   | Multi-door interlock        |
+| ResultCardRWFailed     | 30   | Card read/write failed      |
+| ResultGroupIDError     | 31   | Group ID error              |
+| ResultSystemStatus     | 32   | System status detail        |
+| ResultBlacklist        | 33   | Blacklist                   |
+| ResultStorageError     | 34   | Storage error               |
+| ResultNotAuthorized    | 35   | Not authorized              |
+| ResultTooManyInside    | 36   | Too many people inside      |
+| ResultAgeRestriction   | 37   | Age restriction             |
+| ResultIDExpired        | 38   | ID expired                  |
 
 ## Protocol reference
 
@@ -684,9 +720,7 @@ tc := s4a.NewTextCommand().
     SetReportIP("10.254.33.14").
     SetReportPort(50000).
     SetName("FrontDoor")
-f := tc.BuildFrame(s4a.DefaultDeviceID, seq)
-client := ... // see below
-client.sendAndWait(ctx, f)
+ct.SendTextCommand(ctx, tc)
 ```
 
 ### Open a Door
@@ -851,9 +885,37 @@ S4A software: Operation > Console > Adjust Time
 ct.SyncTime(ctx)
 
 // Or set manually via text command
-tc := s4a.NewTextCommand().SetTime(time.Date(2025, 7, 9, 15, 30, 0, 0, time.Local))
-f := tc.BuildFrame(s4a.DefaultDeviceID, seq)
-client.sendAndWait(ctx, f)
+ct.SendTextCommand(ctx, s4a.NewTextCommand().SetTime(time.Date(2025, 7, 9, 15, 30, 0, 0, time.Local)))
+```
+
+### Query an Authorization
+
+Look up a card by position index (1-based). Useful for backing up the card database:
+
+```go
+// Query the first authorization slot
+right, err := ct.QueryAuth(ctx, 1)
+if err != nil {
+    log.Fatal(err)
+}
+fmt.Printf("card=%d valid=%s-%s readers=%v\n",
+    right.CardNumber, right.ValidFrom, right.ValidUntil, right.Readers)
+```
+
+### Send Text Commands
+
+The `TextCommand` builder constructs command strings sent via cmd 0x94. Use `Client.SendTextCommand` or `Controller.SendTextCommand` instead of manually calling `BuildFrame` + `sendAndWait`:
+
+```go
+tc := s4a.NewTextCommand().
+    SetReportIP("192.168.1.100").
+    SetReportPort(50000)
+
+// Via client
+client.SendTextCommand(ctx, tc)
+
+// Via controller
+ct.SendTextCommand(ctx, tc)
 ```
 
 ### Inter-lock (Two doors never open simultaneously)
@@ -924,11 +986,10 @@ tc := s4a.NewTextCommand().
     SetSignal(2, 2).          // S2 = exit button
     SetSignalDoor(2, 1).      // S2 triggers relay 1
     SetSignalDir(2, s4a.DirExit).
-    SetRelayDelay(1, 3000).   // Relay 1 default 3s
-    SetCloseTimeout(15)       // Door-open alarm after 15s
+    SetRelayDelay(1, 3*time.Second). // Relay 1 default 3s
+    SetCloseTimeout(15)              // Door-open alarm after 15s
+ct.SendTextCommand(ctx, tc)
 
-f := tc.BuildFrame(s4a.DefaultDeviceID, seq)
-client.sendAndWait(ctx, f)
 ```
 
 ### Bulk Authorize from File
@@ -948,7 +1009,7 @@ for _, line := range strings.Split(strings.TrimSpace(string(cards)), "\n") {
         RemainCount: s4a.RemainUnlimited,
     }
     if err := client.Authorize(ctx, right); err != nil {
-        log.Printf("failed to authorize %d: %v", cardLow, err)
+        log.Printf("failed to authorize %d: %v", cardNumber, err)
     }
 }
 
@@ -957,9 +1018,7 @@ for _, line := range strings.Split(strings.TrimSpace(string(cards)), "\n") {
 client.ClearAuth(ctx)
 // 2. Upload each card
 // 3. Restart controller
-tc := s4a.NewTextCommand().Restart()
-f := tc.BuildFrame(s4a.DefaultDeviceID, seq)
-client.sendAndWait(ctx, f)
+ct.SendTextCommand(ctx, s4a.NewTextCommand().Restart())
 ```
 
 ### Reboot / Clear Data
@@ -967,19 +1026,13 @@ client.sendAndWait(ctx, f)
 S4A software: Configuration > Controllers > Reboot / Clear All Data
 
 ```go
-tc := s4a.NewTextCommand().Restart()
-f := tc.BuildFrame(s4a.DefaultDeviceID, seq)
-client.sendAndWait(ctx, f)
+ct.SendTextCommand(ctx, s4a.NewTextCommand().Restart())
 
 // Clear all logs
-tc = s4a.NewTextCommand().ClearData(s4a.ClearLogs)
-f = tc.BuildFrame(s4a.DefaultDeviceID, seq)
-client.sendAndWait(ctx, f)
+ct.SendTextCommand(ctx, s4a.NewTextCommand().ClearData(s4a.ClearLogs))
 
 // Clear all authorizations
-tc = s4a.NewTextCommand().ClearData(s4a.ClearAuth)
-f = tc.BuildFrame(s4a.DefaultDeviceID, seq)
-client.sendAndWait(ctx, f)
+ct.SendTextCommand(ctx, s4a.NewTextCommand().ClearData(s4a.ClearAuth))
 ```
 
 ### Display Text on Screen
@@ -989,13 +1042,12 @@ S4A software: This is part of the hardware config, triggered automatically on sw
 ```go
 tc := s4a.NewTextCommand().DisplayScreen(
     "John Doe^Male^1234567890^^Access Granted^2025-07-09 15:30:00^^",
-    s4a.DirEntry, // show on entry screen
-    2,            // page 2 (IC/barcode result)
-    0,            // restore default page after
-    5,            // show for 5 seconds
+    int(s4a.DirEntry), // show on entry screen
+    2,                  // page 2 (IC/barcode result)
+    0,                  // restore default page after
+    5,                  // show for 5 seconds
 )
-f := tc.BuildFrame(s4a.DefaultDeviceID, seq)
-client.sendAndWait(ctx, f)
+ct.SendTextCommand(ctx, tc)
 ```
 
 ### Play Voice / Audio
@@ -1003,11 +1055,9 @@ client.sendAndWait(ctx, f)
 ```go
 // Play voice index 5 three times immediately
 tc := s4a.NewTextCommand().Sound(5, 3, true)
-f := tc.BuildFrame(s4a.DefaultDeviceID, seq)
-client.sendAndWait(ctx, f)
+ct.SendTextCommand(ctx, tc)
 
 // Text-to-speech
 tc = s4a.NewTextCommand().TTS("Welcome")
-f = tc.BuildFrame(s4a.DefaultDeviceID, seq)
-client.sendAndWait(ctx, f)
+ct.SendTextCommand(ctx, tc)
 ```

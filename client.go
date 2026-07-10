@@ -117,6 +117,24 @@ func (c *Client) readLoop() {
 	}
 }
 
+func (c *Client) QueryAuth(ctx context.Context, position uint32) (*AuthRight, error) {
+	f := NewQueryAuthRequest(c.deviceID, c.nextSeq(), position)
+	resp, err := c.sendAndWait(ctx, f)
+	if err != nil {
+		return nil, err
+	}
+	return ParseQueryAuthResponse(resp)
+}
+
+func (c *Client) SendTextCommand(ctx context.Context, tc *TextCommand) error {
+	f := tc.BuildFrame(c.deviceID, c.nextSeq())
+	resp, err := c.sendAndWait(ctx, f)
+	if err != nil {
+		return err
+	}
+	return ParseTextCommandResponse(resp)
+}
+
 func (c *Client) OpenDoor(ctx context.Context, door uint8, duration time.Duration) error {
 	f := NewOpenDoorRequest(c.deviceID, c.nextSeq(), door, duration)
 	resp, err := c.sendAndWait(ctx, f)

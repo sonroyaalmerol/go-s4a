@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"time"
+	"unicode/utf16"
 	"unsafe"
 )
 
@@ -19,6 +20,45 @@ const (
 	EventTypeAuthResult   byte = 9
 	EventTypeGetTime      byte = 10
 )
+
+func EventTypeString(t byte) string {
+	switch t {
+	case EventTypeEvent:
+		return "event"
+	case EventTypeCardSwipe:
+		return "card_swipe"
+	case EventTypeIDCard:
+		return "id_card"
+	case EventTypeHeartbeat:
+		return "heartbeat"
+	case EventTypeDebug:
+		return "debug"
+	case EventTypeSignalChange:
+		return "signal_change"
+	case EventTypeOpLog:
+		return "op_log"
+	case EventTypePullAuth:
+		return "pull_auth"
+	case EventTypeAuthResult:
+		return "auth_result"
+	case EventTypeGetTime:
+		return "get_time"
+	default:
+		return fmt.Sprintf("unknown(%d)", t)
+	}
+}
+
+type IDCardData struct {
+	Name        string
+	Gender      string
+	Ethnicity   string
+	BirthDate   string
+	Address     string
+	IDNumber    string
+	IssuingAuth string
+	Expiry      string
+	PhotoData   []byte
+}
 
 type Event struct {
 	Type       byte
@@ -38,6 +78,8 @@ type Event struct {
 	LogType      string
 	LogSubType   string
 	IDCardChip   string
+
+	IDCard *IDCardData
 
 	HBControllerFlag  string
 	HBTimeoutConfig   string
@@ -77,6 +119,7 @@ func ParseEvent(raw []byte) (*Event, error) {
 	evt := &Event{}
 	evt.Type = raw[1]
 	evt.Seq = binary.LittleEndian.Uint32(raw[4:8])
+	evt.RawHeader = raw[:8]
 
 	dataLen := int(raw[2])<<8 | int(raw[3])
 	payloadEnd := min(8+dataLen, len(raw))
@@ -106,9 +149,90 @@ func ParseEvent(raw []byte) (*Event, error) {
 			parsePipeFields(evt.RawPayload, 9, func(idx int, start, end int) {
 				assignLogField(evt, idx, b2s(raw[8+start:8+end]))
 			})
+		case EventTypeIDCard:
+			parseIDCardPayload(evt)
+		case EventTypeEvent, EventTypeDebug, EventTypeOpLog, EventTypePullAuth, EventTypeAuthResult, EventTypeGetTime:
+			parsePipeFields(evt.RawPayload, pipeFieldCount, func(idx int, start, end int) {
+				assignCardSwipeField(evt, idx, b2s(evt.RawPayload[start:end]))
+			})
 		}
 	}
 	return evt, nil
+}
+
+func parseIDCardPayload(evt *Event) {
+	p := evt.RawPayload
+	if len(p) < 14 {
+		return
+	}
+	prefix := p[:14]
+	if !isIDCardPrefix(prefix) {
+		parsePipeFields(evt.RawPayload, pipeFieldCount, func(idx int, start, end int) {
+			assignCardSwipeField(evt, idx, b2s(evt.RawPayload[start:end]))
+		})
+		return
+	}
+
+	rest := p[14:]
+	if len(rest) < 256 {
+		evt.IDCard = &IDCardData{PhotoData: rest}
+		return
+	}
+
+	unicodeData := rest[:256]
+	text := decodeUTF16LE(unicodeData)
+
+	photoStart := 256
+	photoEnd := len(rest)
+	if photoStart+4 < photoEnd && rest[photoStart] == 'W' && rest[photoStart+1] == 'L' && rest[photoStart+2] == 'f' {
+		photoEnd = len(rest)
+	}
+
+	evt.IDCard = &IDCardData{
+		Name:        extractIDCardField(text, 0, 30),
+		Gender:      extractIDCardField(text, 30, 2),
+		Ethnicity:   extractIDCardField(text, 32, 4),
+		BirthDate:   extractIDCardField(text, 36, 16),
+		Address:     extractIDCardField(text, 52, 70),
+		IDNumber:    extractIDCardField(text, 122, 36),
+		IssuingAuth: extractIDCardField(text, 158, 30),
+		Expiry:      extractIDCardField(text, 188, 32),
+		PhotoData:   rest[photoStart:photoEnd],
+	}
+}
+
+func isIDCardPrefix(p []byte) bool {
+	for _, b := range p {
+		if b != 0xaa {
+			return false
+		}
+	}
+	return true
+}
+
+func decodeUTF16LE(data []byte) string {
+	if len(data)%2 != 0 {
+		data = data[:len(data)-1]
+	}
+	u16 := make([]uint16, len(data)/2)
+	for i := range u16 {
+		u16[i] = uint16(data[2*i]) | uint16(data[2*i+1])<<8
+	}
+	runes := utf16.Decode(u16)
+	return string(runes)
+}
+
+func extractIDCardField(text string, start, length int) string {
+	runes := []rune(text)
+	end := min(start+length, len(runes))
+	if start >= len(runes) {
+		return ""
+	}
+	result := string(runes[start:end])
+	for len(result) > 0 && result[len(result)-1] == 0 {
+		result = result[:len(result)-1]
+	}
+	return result
 }
 
 const pipeFieldCount = 12
