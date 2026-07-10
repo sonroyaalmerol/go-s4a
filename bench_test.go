@@ -3,6 +3,7 @@ package s4a
 import (
 	"fmt"
 	"testing"
+	"time"
 )
 
 var benchCardSwipeRaw = []byte("0008242637|1|26419|4|2015-04-30 15:20:25|5|1|1|26419|||")
@@ -39,7 +40,7 @@ func BenchmarkParseHeartbeatEvent(b *testing.B) {
 }
 
 func BenchmarkFrameAppendBinary(b *testing.B) {
-	f := NewOpenDoorRequest(0xFFFF, 4, 1, 300)
+	f := NewOpenDoorRequest(0xFFFF, 4, 1, 3*time.Second)
 	buf := make([]byte, 0, FrameSize(len(f.Data)))
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -50,24 +51,23 @@ func BenchmarkFrameAppendBinary(b *testing.B) {
 
 func BenchmarkFrameAppendBinaryAuthorize(b *testing.B) {
 	right := &AuthRight{
-		CardLow:     0x12345678,
-		BeginDate:   BCDDateEncode(2025, 1, 15),
-		EndDate:     BCDDateEncode(2030, 12, 31),
-		EndTime:     BCDTimeEncode(23, 59, 58),
+		CardNumber:  0x12345678,
+		ValidFrom:   time.Date(2025, 1, 15, 0, 0, 0, 0, time.Local),
+		ValidUntil:  time.Date(2030, 12, 31, 23, 59, 58, 0, time.Local),
 		ReaderMask:  0xFF,
-		RemainCount: 0xFFFF,
+		RemainCount: RemainUnlimited,
 	}
 	f := NewAuthorizeRequest(0xFFFF, 1, right)
 	buf := make([]byte, 0, FrameSize(len(f.Data)))
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		buf, _ = f.AppendBinary(buf[:0])
+		buf, _ = right.AppendBinary(buf[:0])
 	}
 }
 
 func BenchmarkFrameUnmarshalBinary(b *testing.B) {
-	f := NewOpenDoorRequest(0xFFFF, 4, 1, 300)
+	f := NewOpenDoorRequest(0xFFFF, 4, 1, 3*time.Second)
 	raw, _ := f.AppendBinary(nil)
 	var ff Frame
 	b.ReportAllocs()
@@ -81,11 +81,11 @@ func BenchmarkFrameUnmarshalBinary(b *testing.B) {
 
 func BenchmarkAuthRightAppendBinary(b *testing.B) {
 	right := &AuthRight{
-		CardLow:     0x12345678,
-		BeginDate:   BCDDateEncode(2025, 1, 15),
-		EndDate:     BCDDateEncode(2030, 12, 31),
+		CardNumber:  0x12345678,
+		ValidFrom:   time.Date(2025, 1, 15, 0, 0, 0, 0, time.Local),
+		ValidUntil:  time.Date(2030, 12, 31, 23, 59, 58, 0, time.Local),
 		ReaderMask:  0xFF,
-		RemainCount: 0xFFFF,
+		RemainCount: RemainUnlimited,
 	}
 	buf := make([]byte, 0, 24)
 	b.ReportAllocs()
@@ -97,11 +97,11 @@ func BenchmarkAuthRightAppendBinary(b *testing.B) {
 
 func BenchmarkAuthRightUnmarshalBinary(b *testing.B) {
 	right := &AuthRight{
-		CardLow:     0x12345678,
-		BeginDate:   BCDDateEncode(2025, 1, 15),
-		EndDate:     BCDDateEncode(2030, 12, 31),
+		CardNumber:  0x12345678,
+		ValidFrom:   time.Date(2025, 1, 15, 0, 0, 0, 0, time.Local),
+		ValidUntil:  time.Date(2030, 12, 31, 23, 59, 58, 0, time.Local),
 		ReaderMask:  0xFF,
-		RemainCount: 0xFFFF,
+		RemainCount: RemainUnlimited,
 	}
 	raw, _ := right.AppendBinary(nil)
 	var ar AuthRight

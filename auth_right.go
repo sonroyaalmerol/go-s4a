@@ -1,21 +1,39 @@
 package s4a
 
-import "encoding/binary"
+import (
+	"encoding/binary"
+	"time"
+)
+
+const RemainUnlimited uint16 = 0xFFFF
+
+func DirectionalRemain(entry, exit int) uint16 {
+	return uint16(60000 + entry*100 + exit)
+}
 
 type AuthRight struct {
-	CardHigh    uint32
-	CardLow     uint32
-	BeginDate   uint16
-	BeginTime   uint16
-	EndDate     uint16
-	EndTime     uint16
+	CardNumber  uint64
+	ValidFrom   time.Time
+	ValidUntil  time.Time
 	TimeZone    uint8
 	ReaderMask  uint8
 	RemainCount uint16
-	Flags       uint16
-	Group       uint8
-	Position    uint8
-	PersonType  uint8
+
+	IsName       bool
+	HasPackage   bool
+	HasDebt      bool
+	HasFlag1     bool
+	HasFlag2     bool
+	HasFlag3     bool
+	AntiPassback bool
+
+	Group      uint8
+	Position   uint8
+	PersonType uint8
+}
+
+func (a *AuthRight) IsUnlimited() bool {
+	return a.RemainCount == RemainUnlimited
 }
 
 func (a *AuthRight) AppendBinary(b []byte) ([]byte, error) {
@@ -27,17 +45,38 @@ func (a *AuthRight) AppendBinary(b []byte) ([]byte, error) {
 	}
 	b = b[:n]
 	off := n - 24
-	binary.LittleEndian.PutUint32(b[off:off+4], a.CardHigh)
-	binary.LittleEndian.PutUint32(b[off+4:off+8], a.CardLow)
-	binary.LittleEndian.PutUint16(b[off+8:off+10], a.BeginDate)
-	binary.LittleEndian.PutUint16(b[off+10:off+12], a.BeginTime)
-	binary.LittleEndian.PutUint16(b[off+12:off+14], a.EndDate)
-	binary.LittleEndian.PutUint16(b[off+14:off+16], a.EndTime)
+	binary.LittleEndian.PutUint32(b[off:off+4], uint32(a.CardNumber>>32))
+	binary.LittleEndian.PutUint32(b[off+4:off+8], uint32(a.CardNumber&0xFFFFFFFF))
+	binary.LittleEndian.PutUint16(b[off+8:off+10], BCDDateEncode(a.ValidFrom.Year(), a.ValidFrom.Month(), a.ValidFrom.Day()))
+	binary.LittleEndian.PutUint16(b[off+10:off+12], BCDTimeEncode(a.ValidFrom.Hour(), a.ValidFrom.Minute(), a.ValidFrom.Second()))
+	binary.LittleEndian.PutUint16(b[off+12:off+14], BCDDateEncode(a.ValidUntil.Year(), a.ValidUntil.Month(), a.ValidUntil.Day()))
+	binary.LittleEndian.PutUint16(b[off+14:off+16], BCDTimeEncode(a.ValidUntil.Hour(), a.ValidUntil.Minute(), a.ValidUntil.Second()))
 	b[off+16] = a.TimeZone
 	b[off+17] = a.ReaderMask
 	binary.LittleEndian.PutUint16(b[off+18:off+20], a.RemainCount)
-	binary.LittleEndian.PutUint16(b[off+20:off+22], a.Flags)
-	bits := uint32(a.Flags) | uint32(a.Group)<<23 | uint32(a.Position)<<26 | uint32(a.PersonType)<<28
+	flags := uint16(0)
+	if a.IsName {
+		flags |= 1 << 0
+	}
+	if a.HasPackage {
+		flags |= 1 << 1
+	}
+	if a.HasDebt {
+		flags |= 1 << 2
+	}
+	if a.HasFlag1 {
+		flags |= 1 << 3
+	}
+	if a.HasFlag2 {
+		flags |= 1 << 4
+	}
+	if a.HasFlag3 {
+		flags |= 1 << 5
+	}
+	if a.AntiPassback {
+		flags |= 1 << 6
+	}
+	bits := uint32(flags) | uint32(a.Group)<<23 | uint32(a.Position)<<26 | uint32(a.PersonType)<<28
 	binary.LittleEndian.PutUint32(b[off+20:off+24], bits)
 	return b, nil
 }
@@ -46,17 +85,31 @@ func (a *AuthRight) UnmarshalBinary(data []byte) error {
 	if len(data) < 24 {
 		return ErrFrameTooShort
 	}
-	a.CardHigh = binary.LittleEndian.Uint32(data[0:4])
-	a.CardLow = binary.LittleEndian.Uint32(data[4:8])
-	a.BeginDate = binary.LittleEndian.Uint16(data[8:10])
-	a.BeginTime = binary.LittleEndian.Uint16(data[10:12])
-	a.EndDate = binary.LittleEndian.Uint16(data[12:14])
-	a.EndTime = binary.LittleEndian.Uint16(data[14:16])
+	cardHigh := binary.LittleEndian.Uint32(data[0:4])
+	cardLow := binary.LittleEndian.Uint32(data[4:8])
+	a.CardNumber = uint64(cardHigh)<<32 | uint64(cardLow)
+	beginDate := binary.LittleEndian.Uint16(data[8:10])
+	beginTime := binary.LittleEndian.Uint16(data[10:12])
+	endDate := binary.LittleEndian.Uint16(data[12:14])
+	endTime := binary.LittleEndian.Uint16(data[14:16])
+	yr, mo, dy := BCDDateDecode(beginDate)
+	hr, mi, se := BCDTimeDecode(beginTime)
+	a.ValidFrom = time.Date(yr, mo, dy, hr, mi, se, 0, time.Local)
+	yr, mo, dy = BCDDateDecode(endDate)
+	hr, mi, se = BCDTimeDecode(endTime)
+	a.ValidUntil = time.Date(yr, mo, dy, hr, mi, se, 0, time.Local)
 	a.TimeZone = data[16]
 	a.ReaderMask = data[17]
 	a.RemainCount = binary.LittleEndian.Uint16(data[18:20])
 	bits := binary.LittleEndian.Uint32(data[20:24])
-	a.Flags = uint16(bits & 0xffff)
+	flags := uint16(bits & 0xffff)
+	a.IsName = flags&(1<<0) != 0
+	a.HasPackage = flags&(1<<1) != 0
+	a.HasDebt = flags&(1<<2) != 0
+	a.HasFlag1 = flags&(1<<3) != 0
+	a.HasFlag2 = flags&(1<<4) != 0
+	a.HasFlag3 = flags&(1<<5) != 0
+	a.AntiPassback = flags&(1<<6) != 0
 	a.Group = uint8((bits >> 23) & 0x07)
 	a.Position = uint8((bits >> 26) & 0x03)
 	a.PersonType = uint8((bits >> 28) & 0x0f)

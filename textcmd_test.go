@@ -2,17 +2,18 @@ package s4a
 
 import (
 	"testing"
+	"time"
 )
 
 func TestTextCommandOpenDoor(t *testing.T) {
-	tc := NewTextCommand().OpenDoor(1, 300)
+	tc := NewTextCommand().OpenDoor(1, 3*time.Second)
 	if s := tc.String(); s != "open1=300" {
 		t.Errorf("got %q, want %q", s, "open1=300")
 	}
 }
 
 func TestTextCommandOpenDoorMulti(t *testing.T) {
-	tc := NewTextCommand().OpenDoorMulti(2, 300, 5, 1000)
+	tc := NewTextCommand().OpenDoorMulti(2, 3*time.Second, 5, 1*time.Second)
 	if s := tc.String(); s != "open2=300;time2=5;stopn=1000" {
 		t.Errorf("got %q", s)
 	}
@@ -33,8 +34,9 @@ func TestTextCommandTTS(t *testing.T) {
 }
 
 func TestTextCommandSetTime(t *testing.T) {
-	tc := NewTextCommand().SetTime(2025, 6, 15, 14, 30, 0, 1)
-	if s := tc.String(); s != "settime=2025-06-15 14:30:00 1" {
+	tm := time.Date(2026, 1, 5, 14, 30, 0, 0, time.Local)
+	tc := NewTextCommand().SetTime(tm)
+	if s := tc.String(); s != "settime=2026-01-05 14:30:00 1" {
 		t.Errorf("got %q", s)
 	}
 }
@@ -84,7 +86,7 @@ func TestTextCommandReaderConfig(t *testing.T) {
 }
 
 func TestTextCommandRelayConfig(t *testing.T) {
-	tc := NewTextCommand().SetRelayDelay(1, 3000).SetCloseTimeout(15)
+	tc := NewTextCommand().SetRelayDelay(1, 3*time.Second).SetCloseTimeout(15)
 	if s := tc.String(); s != "delay1=3000;closeTimeout=15" {
 		t.Errorf("got %q", s)
 	}

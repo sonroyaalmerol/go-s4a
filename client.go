@@ -117,8 +117,8 @@ func (c *Client) readLoop() {
 	}
 }
 
-func (c *Client) OpenDoor(ctx context.Context, door uint8, durationMs uint16) error {
-	f := NewOpenDoorRequest(c.deviceID, c.nextSeq(), door, durationMs)
+func (c *Client) OpenDoor(ctx context.Context, door uint8, duration time.Duration) error {
+	f := NewOpenDoorRequest(c.deviceID, c.nextSeq(), door, duration)
 	resp, err := c.sendAndWait(ctx, f)
 	if err != nil {
 		return err
@@ -135,8 +135,17 @@ func (c *Client) Authorize(ctx context.Context, right *AuthRight) error {
 	return ParseAuthorizeResponse(resp)
 }
 
-func (c *Client) RevokeAuth(ctx context.Context, cardHigh, cardLow uint32) error {
-	f := NewRevokeAuthRequest(c.deviceID, c.nextSeq(), cardHigh, cardLow)
+func (c *Client) ControlDoor(ctx context.Context, door uint8, cmd DoorControl) error {
+	f := NewControlDoorRequest(c.deviceID, c.nextSeq(), door, cmd)
+	resp, err := c.sendAndWait(ctx, f)
+	if err != nil {
+		return err
+	}
+	return ParseOpenDoorResponse(resp)
+}
+
+func (c *Client) RevokeAuth(ctx context.Context, cardNumber uint64) error {
+	f := NewRevokeAuthRequest(c.deviceID, c.nextSeq(), cardNumber)
 	resp, err := c.sendAndWait(ctx, f)
 	if err != nil {
 		return err
@@ -163,8 +172,7 @@ func (c *Client) MonitorLog(ctx context.Context, index uint32) (*MonitorLogRespo
 }
 
 func (c *Client) SetTime(ctx context.Context, t time.Time) error {
-	td := BuildTimeData(t)
-	f := NewSetTimeRequest(c.deviceID, c.nextSeq(), td)
+	f := NewSetTimeRequest(c.deviceID, c.nextSeq(), t)
 	resp, err := c.sendAndWait(ctx, f)
 	if err != nil {
 		return err

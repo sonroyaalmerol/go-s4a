@@ -80,27 +80,3 @@ func ControllerErrorCode(code uint8) string {
 		return "Unknown"
 	}
 }
-
-func DoorDirection(dir uint8) string {
-	switch dir {
-	case 1:
-		return "Entry"
-	case 2:
-		return "Exit"
-	default:
-		return "Unknown"
-	}
-}
-
-func LogTypeString(t uint8) string {
-	switch t {
-	case 1:
-		return "Event"
-	case 2:
-		return "Card swipe"
-	case 3:
-		return "Operation"
-	default:
-		return "Unknown"
-	}
-}

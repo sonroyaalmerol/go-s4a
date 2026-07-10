@@ -3,6 +3,7 @@ package s4a
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 type TextCommand struct {
@@ -29,15 +30,15 @@ func (tc *TextCommand) add(key, value string) {
 	}
 }
 
-func (tc *TextCommand) OpenDoor(door uint8, durationMs int) *TextCommand {
-	tc.add(fmt.Sprintf("open%d", door), fmt.Sprintf("%d", durationMs))
+func (tc *TextCommand) OpenDoor(door uint8, duration time.Duration) *TextCommand {
+	tc.add(fmt.Sprintf("open%d", door), fmt.Sprintf("%d", durationToWire(duration)))
 	return tc
 }
 
-func (tc *TextCommand) OpenDoorMulti(door uint8, durationMs int, count int, intervalMs int) *TextCommand {
-	tc.OpenDoor(door, durationMs)
+func (tc *TextCommand) OpenDoorMulti(door uint8, duration time.Duration, count int, interval time.Duration) *TextCommand {
+	tc.OpenDoor(door, duration)
 	tc.add(fmt.Sprintf("time%d", door), fmt.Sprintf("%d", count))
-	tc.add("stopn", fmt.Sprintf("%d", intervalMs))
+	tc.add("stopn", fmt.Sprintf("%d", interval.Milliseconds()))
 	return tc
 }
 
@@ -57,8 +58,8 @@ func (tc *TextCommand) TTS(text string) *TextCommand {
 	return tc
 }
 
-func (tc *TextCommand) SetTime(year, month, day, hour, minute, second int, weekday int) *TextCommand {
-	val := fmt.Sprintf("%04d-%02d-%02d %02d:%02d:%02d %d", year, month, day, hour, minute, second, weekday)
+func (tc *TextCommand) SetTime(t time.Time) *TextCommand {
+	val := fmt.Sprintf("%04d-%02d-%02d %02d:%02d:%02d %d", t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Weekday())
 	tc.add("settime", val)
 	return tc
 }
@@ -139,8 +140,8 @@ func (tc *TextCommand) SetAlarmNotClose(relay int) *TextCommand {
 	return tc
 }
 
-func (tc *TextCommand) SetRelayDelay(door uint8, durationMs int) *TextCommand {
-	tc.add(fmt.Sprintf("delay%d", door), fmt.Sprintf("%d", durationMs))
+func (tc *TextCommand) SetRelayDelay(door uint8, duration time.Duration) *TextCommand {
+	tc.add(fmt.Sprintf("delay%d", door), fmt.Sprintf("%d", duration.Milliseconds()))
 	return tc
 }
 
@@ -190,18 +191,12 @@ const (
 	PortWiegand4 = 8
 )
 
-const (
-	DirUnknown = 0
-	DirEntry   = 1
-	DirExit    = 2
-)
-
 func (tc *TextCommand) SetReaderMode(port uint8, mode int) *TextCommand {
 	tc.add(fmt.Sprintf("mode%d", port), fmt.Sprintf("%d", mode))
 	return tc
 }
 
-func (tc *TextCommand) SetReaderDir(port uint8, dir int) *TextCommand {
+func (tc *TextCommand) SetReaderDir(port uint8, dir Direction) *TextCommand {
 	tc.add(fmt.Sprintf("dir%d", port), fmt.Sprintf("%d", dir))
 	return tc
 }
@@ -226,7 +221,7 @@ func (tc *TextCommand) SetSignalDoor(signal uint8, door uint8) *TextCommand {
 	return tc
 }
 
-func (tc *TextCommand) SetSignalDir(signal uint8, dir int) *TextCommand {
+func (tc *TextCommand) SetSignalDir(signal uint8, dir Direction) *TextCommand {
 	tc.add(fmt.Sprintf("sigdir%d", signal), fmt.Sprintf("%d", dir))
 	return tc
 }

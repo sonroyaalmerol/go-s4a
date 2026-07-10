@@ -3,6 +3,24 @@ package s4a
 import (
 	"encoding/binary"
 	"fmt"
+	"time"
+)
+
+func durationToWire(d time.Duration) uint16 {
+	if d == 0 {
+		return 0
+	}
+	return uint16(d / (10 * time.Millisecond))
+}
+
+type DoorControl uint16
+
+const (
+	RestoreAuto DoorControl = 65001
+	KeepOpen    DoorControl = 65002
+	KeepClosed  DoorControl = 65003
+	PulseClose  DoorControl = 65004
+	PulseOpen   DoorControl = 65005
 )
 
 func NewRequestFrame(deviceID uint16, seq uint16, cmd byte, data []byte) *Frame {
@@ -26,16 +44,15 @@ func NewRequestFrame(deviceID uint16, seq uint16, cmd byte, data []byte) *Frame 
 	}
 }
 
-const (
-	OpenDoorRestoreAuto uint16 = 65001
-	OpenDoorKeepOpen    uint16 = 65002
-	OpenDoorKeepClosed  uint16 = 65003
-	OpenDoorCloseRelay  uint16 = 65004
-	OpenDoorOpenRelay   uint16 = 65005
-)
+func NewOpenDoorRequest(deviceID uint16, seq uint16, door uint8, duration time.Duration) *Frame {
+	wireDur := durationToWire(duration)
+	data := []byte{door, byte(wireDur >> 8), byte(wireDur & 0xff)}
+	return NewRequestFrame(deviceID, seq, CmdOpenDoor, data)
+}
 
-func NewOpenDoorRequest(deviceID uint16, seq uint16, door uint8, durationMs uint16) *Frame {
-	data := []byte{door, byte(durationMs >> 8), byte(durationMs & 0xff)}
+func NewControlDoorRequest(deviceID uint16, seq uint16, door uint8, cmd DoorControl) *Frame {
+	wireCmd := uint16(cmd)
+	data := []byte{door, byte(wireCmd >> 8), byte(wireCmd & 0xff)}
 	return NewRequestFrame(deviceID, seq, CmdOpenDoor, data)
 }
 
@@ -64,10 +81,10 @@ func ParseAuthorizeResponse(f *Frame) error {
 	return nil
 }
 
-func NewRevokeAuthRequest(deviceID uint16, seq uint16, cardHigh, cardLow uint32) *Frame {
+func NewRevokeAuthRequest(deviceID uint16, seq uint16, cardNumber uint64) *Frame {
 	data := make([]byte, 8)
-	binary.LittleEndian.PutUint32(data[0:4], cardHigh)
-	binary.LittleEndian.PutUint32(data[4:8], cardLow)
+	binary.LittleEndian.PutUint32(data[0:4], uint32(cardNumber>>32))
+	binary.LittleEndian.PutUint32(data[4:8], uint32(cardNumber&0xFFFFFFFF))
 	return NewRequestFrame(deviceID, seq, CmdRevokeAuth, data)
 }
 
@@ -103,22 +120,14 @@ func NewQueryAuthRequest(deviceID uint16, seq uint16, position uint32) *Frame {
 }
 
 type MonitorLogResponse struct {
-	LogSeq      uint32
-	LogHigh     uint32
-	LogLow      uint32
-	LogDate     uint16
-	LogTime     uint16
-	LogDoor     uint8
-	LogReader   uint8
-	LogResult   uint8
-	LogDir      uint8
-	LogType     uint8
-	LogSubType  uint8
-	LogCount    uint32
-	AuthCount   uint32
-	CurrentTime []byte
+	LogSeq    uint32
+	Log       LogEntry
+	LogCount  uint32
+	AuthCount uint32
+
+	CurrentTime time.Time
 	ReaderRelay []byte
-	DeviceFlag  []byte
+	SerialNum   string
 }
 
 func NewMonitorLogRequest(deviceID uint16, seq uint16, index uint32) *Frame {
@@ -140,29 +149,25 @@ func ParseMonitorLogResponse(f *Frame) (*MonitorLogResponse, error) {
 	}
 	r := &MonitorLogResponse{}
 	r.LogSeq = binary.LittleEndian.Uint32(d[0:4])
-	r.LogHigh = binary.LittleEndian.Uint32(d[4:8])
-	r.LogLow = binary.LittleEndian.Uint32(d[8:12])
-	r.LogDate = binary.LittleEndian.Uint16(d[12:14])
-	r.LogTime = binary.LittleEndian.Uint16(d[14:16])
-	r.LogDoor = d[16] & 0x07
-	r.LogReader = d[16] >> 3
-	r.LogResult = d[17]
-	r.LogDir = d[18] & 0x03
-	r.LogType = d[18] >> 2
-	r.LogSubType = (d[19] >> 1) & 0x1f
+	if err := r.Log.UnmarshalBinary(d[4:20]); err != nil {
+		return nil, fmt.Errorf("parse log entry: %w", err)
+	}
 	r.LogCount = binary.LittleEndian.Uint32(d[20:24])
 	r.AuthCount = binary.LittleEndian.Uint32(d[24:28])
-	r.CurrentTime = make([]byte, 7)
-	copy(r.CurrentTime, d[28:35])
+	r.CurrentTime = time.Date(
+		2000+int(d[28]), time.Month(d[29]), int(d[30]),
+		int(d[31]), int(d[32]), int(d[33]),
+		0, time.Local,
+	)
 	r.ReaderRelay = make([]byte, 8)
 	copy(r.ReaderRelay, d[35:43])
-	r.DeviceFlag = make([]byte, 5)
-	copy(r.DeviceFlag, d[43:48])
+	r.SerialNum = string(d[43:48])
 	return r, nil
 }
 
-func NewSetTimeRequest(deviceID uint16, seq uint16, timeData [7]byte) *Frame {
-	return NewRequestFrame(deviceID, seq, CmdSetTime, timeData[:])
+func NewSetTimeRequest(deviceID uint16, seq uint16, t time.Time) *Frame {
+	td := BuildTimeData(t)
+	return NewRequestFrame(deviceID, seq, CmdSetTime, td[:])
 }
 
 func ParseSetTimeResponse(f *Frame) error {

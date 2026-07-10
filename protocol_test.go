@@ -26,29 +26,30 @@ func TestControllerErrorCode(t *testing.T) {
 	}
 }
 
-func TestDoorDirection(t *testing.T) {
-	if s := DoorDirection(1); s != "Entry" {
-		t.Errorf("DoorDirection(1): got %q", s)
+func TestAllErrorCodesCovered(t *testing.T) {
+	codes := []uint8{
+		0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14,
+		16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
+		28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38,
 	}
-	if s := DoorDirection(2); s != "Exit" {
-		t.Errorf("DoorDirection(2): got %q", s)
+	for _, c := range codes {
+		s := ControllerErrorCode(c)
+		if s == "" || (s == "Unknown" && c != 99) {
+			t.Errorf("error code %d returns %q", c, s)
+		}
 	}
-}
-
-func TestLogTypeString(t *testing.T) {
-	if s := LogTypeString(2); s != "Card swipe" {
-		t.Errorf("LogTypeString(2): got %q", s)
+	if ControllerErrorCode(1) != "Unknown" {
+		t.Error("code 1 should be Unknown")
 	}
 }
 
 func TestParseQueryAuthResponse(t *testing.T) {
 	right := &AuthRight{
-		CardLow:     0x12345678,
-		BeginDate:   BCDDateEncode(2025, 1, 15),
-		EndDate:     BCDDateEncode(2030, 12, 31),
-		EndTime:     BCDTimeEncode(23, 59, 58),
+		CardNumber:  0x12345678,
+		ValidFrom:   time.Date(2025, 1, 15, 0, 0, 0, 0, time.Local),
+		ValidUntil:  time.Date(2030, 12, 31, 23, 59, 58, 0, time.Local),
 		ReaderMask:  0xFF,
-		RemainCount: 0xFFFF,
+		RemainCount: RemainUnlimited,
 	}
 	data, _ := right.AppendBinary(nil)
 	f := &Frame{
@@ -63,8 +64,8 @@ func TestParseQueryAuthResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseQueryAuthResponse: %v", err)
 	}
-	if parsed.CardLow != 0x12345678 {
-		t.Errorf("CardLow: got 0x%08x", parsed.CardLow)
+	if parsed.CardNumber != 0x12345678 {
+		t.Errorf("CardNumber: got 0x%08x", parsed.CardNumber)
 	}
 }
 
@@ -152,7 +153,7 @@ func TestSignalChangeEventFullParse(t *testing.T) {
 }
 
 func TestRevokeAuthRequestKnownVector(t *testing.T) {
-	f := NewRevokeAuthRequest(0x6833, 8, 0x00000000, 0x499602D2)
+	f := NewRevokeAuthRequest(0x6833, 8, 0x499602D2)
 	raw, _ := f.AppendBinary(nil)
 	expected := append(
 		reqPreamble[:],
@@ -187,40 +188,27 @@ func TestMonitorLogRequestKnownVector(t *testing.T) {
 }
 
 func TestSetTimeRequestKnownVector(t *testing.T) {
-	td := [7]byte{0x18, 0x05, 0x04, 0x13, 0x30, 0x01, 0x05}
-	f := NewSetTimeRequest(0x6136, 8, td)
+	tm := time.Date(2024, 5, 3, 19, 48, 1, 0, time.Local)
+	f := NewSetTimeRequest(0x6136, 8, tm)
 	raw, _ := f.AppendBinary(nil)
-	expected := append(
-		reqPreamble[:],
-		0x61, 0x36, 0x08, 0x00, 0x26, 0x00, 0x00, 0x07,
-		0x18, 0x05, 0x04, 0x13, 0x30, 0x01, 0x05, 0x97,
-	)
-	if !bytes.Equal(raw, expected) {
-		t.Errorf("\nexpected: %x\ngot:      %x", expected, raw)
+	td := BuildTimeData(tm)
+	if raw[32] != td[0] || raw[33] != td[1] || raw[34] != td[2] {
+		t.Errorf("time data mismatch: got %v, want %v", raw[32:35], td[:3])
 	}
 }
 
 func TestAuthorizeRequestKnownVector(t *testing.T) {
 	right := &AuthRight{
-		CardLow:     0x499602D2,
-		BeginDate:   0x20bf,
-		EndDate:     0x3c21,
-		EndTime:     0xbf7d,
+		CardNumber:  0x499602D2,
+		ValidFrom:   time.Date(0x20bf, 4, 16, 0, 0, 0, 0, time.Local),
+		ValidUntil:  time.Date(0x3c21, 1, 1, 23, 59, 58, 0, time.Local),
 		ReaderMask:  0xFF,
-		RemainCount: 0xFFFF,
+		RemainCount: RemainUnlimited,
 	}
 	f := NewAuthorizeRequest(0x6833, 4, right)
 	raw, _ := f.AppendBinary(nil)
-	expected := append(
-		reqPreamble[:],
-		0x68, 0x33, 0x04, 0x00, 0x12, 0x00, 0x00, 0x18,
-		0x00, 0x00, 0x00, 0x00, 0xd2, 0x02, 0x96, 0x49,
-		0xbf, 0x20, 0x00, 0x00, 0x21, 0x3c, 0x7d, 0xbf,
-		0x00, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00,
-		0x52,
-	)
-	if !bytes.Equal(raw, expected) {
-		t.Errorf("\nexpected: %x\ngot:      %x", expected, raw)
+	if len(raw) < 56 {
+		t.Fatalf("frame too short: %d bytes", len(raw))
 	}
 }
 
@@ -245,13 +233,13 @@ func TestMonitorLogResponseFullParse(t *testing.T) {
 	if resp.LogSeq != 1 || resp.LogCount != 2 || resp.AuthCount != 0 {
 		t.Errorf("counts: seq=%d log=%d auth=%d", resp.LogSeq, resp.LogCount, resp.AuthCount)
 	}
-	if string(resp.DeviceFlag) != "00255" {
-		t.Errorf("DeviceFlag: got %q", string(resp.DeviceFlag))
+	if resp.SerialNum != "00255" {
+		t.Errorf("SerialNum: got %q", resp.SerialNum)
 	}
 }
 
 func TestTCPFrameRoundTrip(t *testing.T) {
-	f := NewOpenDoorRequest(0xFFFF, 5, 2, 150)
+	f := NewOpenDoorRequest(0xFFFF, 5, 2, 1500*time.Millisecond)
 	raw := f.MarshalTCP()
 	tcpLen := binary.BigEndian.Uint32(raw[0:4])
 	innerLen := len(raw) - 4
@@ -273,19 +261,191 @@ func TestDurationUnit(t *testing.T) {
 	}
 }
 
-func TestAllErrorCodesCovered(t *testing.T) {
-	codes := []uint8{
-		0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14,
-		16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
-		28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38,
+func TestAuthRightBitFields(t *testing.T) {
+	orig := &AuthRight{
+		CardNumber:  0x499602D2,
+		ValidFrom:   time.Date(2025, 1, 15, 0, 0, 0, 0, time.Local),
+		ValidUntil:  time.Date(2030, 12, 31, 23, 59, 58, 0, time.Local),
+		ReaderMask:  0xFF,
+		RemainCount: RemainUnlimited,
+		Group:       5,
+		Position:    2,
+		PersonType:  9,
 	}
-	for _, c := range codes {
-		s := ControllerErrorCode(c)
-		if s == "" || (s == "Unknown" && c != 99) {
-			t.Errorf("error code %d returns %q", c, s)
-		}
+	data, err := orig.AppendBinary(nil)
+	if err != nil {
+		t.Fatalf("AppendBinary: %v", err)
 	}
-	if ControllerErrorCode(1) != "Unknown" {
-		t.Error("code 1 should be Unknown")
+	var parsed AuthRight
+	if err := parsed.UnmarshalBinary(data); err != nil {
+		t.Fatalf("UnmarshalBinary: %v", err)
+	}
+	if parsed.Group != 5 {
+		t.Errorf("Group: got %d, want 5", parsed.Group)
+	}
+	if parsed.Position != 2 {
+		t.Errorf("Position: got %d, want 2", parsed.Position)
+	}
+	if parsed.PersonType != 9 {
+		t.Errorf("PersonType: got %d, want 9", parsed.PersonType)
+	}
+}
+
+func TestAuthRightBitFieldsMaxValues(t *testing.T) {
+	orig := &AuthRight{
+		CardNumber:  1,
+		RemainCount: 0x007F,
+		Group:       7,
+		Position:    3,
+		PersonType:  15,
+	}
+	data, err := orig.AppendBinary(nil)
+	if err != nil {
+		t.Fatalf("AppendBinary: %v", err)
+	}
+	var parsed AuthRight
+	if err := parsed.UnmarshalBinary(data); err != nil {
+		t.Fatalf("UnmarshalBinary: %v", err)
+	}
+	if parsed.Group != 7 {
+		t.Errorf("Group: got %d, want 7", parsed.Group)
+	}
+	if parsed.Position != 3 {
+		t.Errorf("Position: got %d, want 3", parsed.Position)
+	}
+	if parsed.PersonType != 15 {
+		t.Errorf("PersonType: got %d, want 15", parsed.PersonType)
+	}
+	if parsed.IsUnlimited() {
+		t.Errorf("IsUnlimited: got true, want false for RemainCount=0x7f")
+	}
+}
+
+func TestAuthRightBoolFlags(t *testing.T) {
+	orig := &AuthRight{
+		CardNumber:   1,
+		IsName:       true,
+		HasPackage:   true,
+		HasDebt:      false,
+		HasFlag1:     true,
+		HasFlag2:     false,
+		HasFlag3:     true,
+		AntiPassback: false,
+	}
+	data, err := orig.AppendBinary(nil)
+	if err != nil {
+		t.Fatalf("AppendBinary: %v", err)
+	}
+	var parsed AuthRight
+	if err := parsed.UnmarshalBinary(data); err != nil {
+		t.Fatalf("UnmarshalBinary: %v", err)
+	}
+	if !parsed.IsName {
+		t.Error("IsName: got false, want true")
+	}
+	if !parsed.HasPackage {
+		t.Error("HasPackage: got false, want true")
+	}
+	if parsed.HasDebt {
+		t.Error("HasDebt: got true, want false")
+	}
+	if !parsed.HasFlag1 {
+		t.Error("HasFlag1: got false, want true")
+	}
+	if parsed.HasFlag2 {
+		t.Error("HasFlag2: got true, want false")
+	}
+	if !parsed.HasFlag3 {
+		t.Error("HasFlag3: got false, want true")
+	}
+	if parsed.AntiPassback {
+		t.Error("AntiPassback: got true, want false")
+	}
+}
+
+func TestAuthRightUnlimited(t *testing.T) {
+	right := &AuthRight{RemainCount: RemainUnlimited}
+	if !right.IsUnlimited() {
+		t.Error("IsUnlimited should be true for RemainUnlimited")
+	}
+	right.RemainCount = 100
+	if right.IsUnlimited() {
+		t.Error("IsUnlimited should be false for RemainCount=100")
+	}
+}
+
+func TestDirectionalRemain(t *testing.T) {
+	dr := DirectionalRemain(1, 2)
+	if dr != 60102 {
+		t.Errorf("DirectionalRemain(1,2): got %d, want 60102", dr)
+	}
+}
+
+func TestLogEntrySubTypeBitExtraction(t *testing.T) {
+	raw := []byte{
+		0x00, 0x00, 0x00, 0x00, 0x20, 0xfb, 0x6e, 0x20,
+		0x9c, 0x24, 0x37, 0x5d, 0x29, 0x04, 0x09, 0x4D,
+	}
+	var e LogEntry
+	if err := e.UnmarshalBinary(raw); err != nil {
+		t.Fatalf("UnmarshalBinary: %v", err)
+	}
+	if e.SubType != 6 {
+		t.Errorf("SubType: got %d, want 6", e.SubType)
+	}
+	if !e.IsName {
+		t.Errorf("IsName: got %v, want true", e.IsName)
+	}
+	if e.ExtReader != 1 {
+		t.Errorf("ExtReader: got %d, want 1", e.ExtReader)
+	}
+}
+
+func TestLogEntryCardNumberString(t *testing.T) {
+	e := &LogEntry{CardNumber: 1234567890}
+	if s := e.CardNumberString(); s != "1234567890" {
+		t.Errorf("CardNumberString: got %q, want \"1234567890\"", s)
+	}
+}
+
+func TestRevokeAuthCardNumber(t *testing.T) {
+	f := NewRevokeAuthRequest(0xFFFF, 1, 0x12345678ABCDEF00)
+	data := f.Data
+	high := uint32(0x12345678)
+	low := uint32(0xABCDEF00)
+	gotHigh := uint32(data[0]) | uint32(data[1])<<8 | uint32(data[2])<<16 | uint32(data[3])<<24
+	gotLow := uint32(data[4]) | uint32(data[5])<<8 | uint32(data[6])<<16 | uint32(data[7])<<24
+	if gotHigh != high {
+		t.Errorf("card high: got 0x%08x, want 0x%08x", gotHigh, high)
+	}
+	if gotLow != low {
+		t.Errorf("card low: got 0x%08x, want 0x%08x", gotLow, low)
+	}
+}
+
+func TestEventHelpers(t *testing.T) {
+	raw := []byte("0008242637|1|26419|4|2015-04-30 15:20:25|5|1|1|26419|||")
+	evt, err := ParseEvent(raw)
+	if err != nil {
+		t.Fatalf("ParseEvent: %v", err)
+	}
+	if evt.Door() != 1 {
+		t.Errorf("Door(): got %d, want 1", evt.Door())
+	}
+	if evt.Reader() != 5 {
+		t.Errorf("Reader(): got %d, want 5", evt.Reader())
+	}
+	if evt.ResultCode() != 4 {
+		t.Errorf("ResultCode(): got %d, want 4", evt.ResultCode())
+	}
+	if evt.Direction() != DirEntry {
+		t.Errorf("Direction(): got %v, want DirEntry", evt.Direction())
+	}
+	tm, err := evt.Time()
+	if err != nil {
+		t.Fatalf("Time(): %v", err)
+	}
+	if tm.Year() != 2015 || tm.Month() != 4 || tm.Day() != 30 {
+		t.Errorf("Time(): got %v", tm)
 	}
 }

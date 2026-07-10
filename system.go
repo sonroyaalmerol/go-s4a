@@ -101,7 +101,7 @@ func (s *System) DisableFirstCardOpen(ctrlAddr string, door uint8) {
 	delete(s.firstCardOpen, ref)
 }
 
-func (s *System) OpenDoor(ctx context.Context, ctrlAddr string, door uint8, duration uint16) error {
+func (s *System) OpenDoor(ctx context.Context, ctrlAddr string, door uint8, duration time.Duration) error {
 	s.mu.Lock()
 	ref := doorRef(ctrlAddr, door)
 
@@ -132,9 +132,8 @@ func (s *System) OpenDoor(ctx context.Context, ctrlAddr string, door uint8, dura
 	s.doorState[ref] = true
 	s.mu.Unlock()
 
-	if duration > 0 && duration < 65000 {
-		doorDur := time.Duration(duration) * 10 * time.Millisecond
-		time.AfterFunc(doorDur, func() {
+	if duration > 0 {
+		time.AfterFunc(duration, func() {
 			s.mu.Lock()
 			delete(s.doorState, ref)
 			s.mu.Unlock()
@@ -187,7 +186,7 @@ func (s *System) handleMultiCardAuth(ctx context.Context, ctrlAddr string, door 
 		ct, ok := s.controllers[ctrlAddr]
 		s.mu.Unlock()
 		if ok {
-			ct.OpenDoor(ctx, door, 300)
+			ct.OpenDoor(ctx, door, 3*time.Second)
 		}
 		return true, nil
 	}
@@ -207,7 +206,7 @@ func (s *System) LockDoor(ctx context.Context, ctrlAddr string, door uint8) erro
 		return fmt.Errorf("s4a: controller %s not found", ctrlAddr)
 	}
 	ct.SetDoorMode(door, DoorLocked)
-	return ct.OpenDoor(ctx, door, OpenDoorKeepClosed)
+	return ct.ControlDoor(ctx, door, KeepClosed)
 }
 
 func (s *System) UnlockDoor(ctx context.Context, ctrlAddr string, door uint8) error {
@@ -219,7 +218,7 @@ func (s *System) UnlockDoor(ctx context.Context, ctrlAddr string, door uint8) er
 		return fmt.Errorf("s4a: controller %s not found", ctrlAddr)
 	}
 	ct.SetDoorMode(door, DoorUnlocked)
-	return ct.OpenDoor(ctx, door, OpenDoorRestoreAuto)
+	return ct.ControlDoor(ctx, door, RestoreAuto)
 }
 
 func (s *System) RestoreAuto(ctx context.Context, ctrlAddr string, door uint8) error {
@@ -233,7 +232,7 @@ func (s *System) RestoreAuto(ctx context.Context, ctrlAddr string, door uint8) e
 		return fmt.Errorf("s4a: controller %s not found", ctrlAddr)
 	}
 	ct.SetDoorMode(door, DoorNormal)
-	return ct.OpenDoor(ctx, door, OpenDoorRestoreAuto)
+	return ct.ControlDoor(ctx, door, RestoreAuto)
 }
 
 func (s *System) DoorState(ctrlAddr string, door uint8) bool {

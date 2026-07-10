@@ -7,7 +7,7 @@ import (
 )
 
 func TestFrameMarshalUnmarshal(t *testing.T) {
-	f := NewOpenDoorRequest(0xFFFF, 4, 1, 300)
+	f := NewOpenDoorRequest(0xFFFF, 4, 1, 3*time.Second)
 	raw := make([]byte, 0, FrameSize(len(f.Data)))
 	raw, _ = f.AppendBinary(raw)
 
@@ -33,13 +33,11 @@ func TestFrameMarshalUnmarshal(t *testing.T) {
 
 func TestFrameMarshalRoundTrip(t *testing.T) {
 	right := &AuthRight{
-		CardLow:     0x12345678,
-		BeginDate:   BCDDateEncode(2025, 1, 15),
-		BeginTime:   0,
-		EndDate:     BCDDateEncode(2030, 12, 31),
-		EndTime:     BCDTimeEncode(23, 59, 58),
+		CardNumber:  0x12345678,
+		ValidFrom:   time.Date(2025, 1, 15, 0, 0, 0, 0, time.Local),
+		ValidUntil:  time.Date(2030, 12, 31, 23, 59, 58, 0, time.Local),
 		ReaderMask:  0xFF,
-		RemainCount: 0xFFFF,
+		RemainCount: RemainUnlimited,
 	}
 
 	f := NewAuthorizeRequest(0xFFFF, 1, right)
@@ -58,8 +56,8 @@ func TestFrameMarshalRoundTrip(t *testing.T) {
 	if err := authRight.UnmarshalBinary(decoded.Data); err != nil {
 		t.Fatalf("UnmarshalBinary AuthRight: %v", err)
 	}
-	if authRight.CardLow != 0x12345678 {
-		t.Errorf("CardLow: expected 0x12345678, got 0x%08x", authRight.CardLow)
+	if authRight.CardNumber != 0x12345678 {
+		t.Errorf("CardNumber: expected 0x12345678, got 0x%08x", authRight.CardNumber)
 	}
 	if authRight.ReaderMask != 0xFF {
 		t.Errorf("ReaderMask: expected 0xFF, got 0x%02x", authRight.ReaderMask)
@@ -70,13 +68,13 @@ func TestOpenDoorKnownVectors(t *testing.T) {
 	tests := []struct {
 		name     string
 		door     uint8
-		duration uint16
+		duration time.Duration
 		expected []byte
 	}{
 		{
 			name:     "door1_3sec",
 			door:     1,
-			duration: 300,
+			duration: 3 * time.Second,
 			expected: append(
 				reqPreamble[:],
 				0xff, 0xff, 0x04, 0x00, 0x10, 0x00, 0x00, 0x03, 0x01, 0x01, 0x2c, 0x41,
@@ -85,7 +83,7 @@ func TestOpenDoorKnownVectors(t *testing.T) {
 		{
 			name:     "door2_5sec",
 			door:     2,
-			duration: 500,
+			duration: 5 * time.Second,
 			expected: append(
 				reqPreamble[:],
 				0xff, 0xff, 0x04, 0x00, 0x10, 0x00, 0x00, 0x03, 0x02, 0x01, 0xf4, 0x0a,
@@ -94,7 +92,7 @@ func TestOpenDoorKnownVectors(t *testing.T) {
 		{
 			name:     "door3_300ms",
 			door:     3,
-			duration: 30,
+			duration: 300 * time.Millisecond,
 			expected: append(
 				reqPreamble[:],
 				0xff, 0xff, 0x04, 0x00, 0x10, 0x00, 0x00, 0x03, 0x03, 0x00, 0x1e, 0x34,
@@ -103,7 +101,7 @@ func TestOpenDoorKnownVectors(t *testing.T) {
 		{
 			name:     "door4_restore_auto",
 			door:     4,
-			duration: OpenDoorRestoreAuto,
+			duration: time.Duration(RestoreAuto) * 10 * time.Millisecond,
 			expected: append(
 				reqPreamble[:],
 				0xff, 0xff, 0x04, 0x00, 0x10, 0x00, 0x00, 0x03, 0x04, 0xfd, 0xe9, 0xfd,
@@ -120,6 +118,19 @@ func TestOpenDoorKnownVectors(t *testing.T) {
 				t.Errorf("\nexpected: %x\ngot:      %x", tt.expected, raw)
 			}
 		})
+	}
+}
+
+func TestControlDoorKnownVectors(t *testing.T) {
+	f := NewControlDoorRequest(0xFFFF, 4, 4, KeepClosed)
+	raw := make([]byte, 0, FrameSize(len(f.Data)))
+	raw, _ = f.AppendBinary(raw)
+	expected := append(
+		reqPreamble[:],
+		0xff, 0xff, 0x04, 0x00, 0x10, 0x00, 0x00, 0x03, 0x04, 0xfd, 0xeb, 0xff,
+	)
+	if !bytes.Equal(raw, expected) {
+		t.Errorf("\nexpected: %x\ngot:      %x", expected, raw)
 	}
 }
 
@@ -223,13 +234,13 @@ func TestMonitorLogResponseParsing(t *testing.T) {
 	if resp.LogCount != 2 {
 		t.Errorf("LogCount: expected 2, got %d", resp.LogCount)
 	}
-	if string(resp.DeviceFlag) != "00255" {
-		t.Errorf("DeviceFlag: got %q", string(resp.DeviceFlag))
+	if resp.SerialNum != "00255" {
+		t.Errorf("SerialNum: got %q", resp.SerialNum)
 	}
 }
 
 func TestChecksumRejection(t *testing.T) {
-	f := NewOpenDoorRequest(0xFFFF, 4, 1, 300)
+	f := NewOpenDoorRequest(0xFFFF, 4, 1, 3*time.Second)
 	raw := make([]byte, 0, FrameSize(len(f.Data)))
 	raw, _ = f.AppendBinary(raw)
 	raw[len(raw)-1] ^= 0xFF
@@ -249,8 +260,8 @@ func TestUnmarshalLogEntry(t *testing.T) {
 	if err := e.UnmarshalBinary(raw); err != nil {
 		t.Fatalf("UnmarshalBinary LogEntry: %v", err)
 	}
-	if e.CardNumber() != 544144160 {
-		t.Errorf("CardNumber: got %d, want 544144160", e.CardNumber())
+	if e.CardNumber != 544144160 {
+		t.Errorf("CardNumber: got %d, want 544144160", e.CardNumber)
 	}
 	if e.Date.Year() != 2018 || e.Date.Month() != 4 || e.Date.Day() != 28 {
 		t.Errorf("Date: got %s, want 2018-04-28", e.Date.Format("2006-01-02"))
@@ -274,91 +285,42 @@ func TestUnmarshalLogEntryTooShort(t *testing.T) {
 	}
 }
 
-func TestAuthRightBitFields(t *testing.T) {
-	orig := &AuthRight{
-		CardHigh:    0,
-		CardLow:     0x499602D2,
-		BeginDate:   BCDDateEncode(2025, 1, 15),
-		EndDate:     BCDDateEncode(2030, 12, 31),
-		ReaderMask:  0xFF,
-		RemainCount: 0xFFFF,
-		Flags:       0,
-		Group:       5,
-		Position:    2,
-		PersonType:  9,
-	}
-	data, err := orig.AppendBinary(nil)
-	if err != nil {
-		t.Fatalf("AppendBinary: %v", err)
-	}
-	var parsed AuthRight
-	if err := parsed.UnmarshalBinary(data); err != nil {
-		t.Fatalf("UnmarshalBinary: %v", err)
-	}
-	if parsed.Group != 5 {
-		t.Errorf("Group: got %d, want 5", parsed.Group)
-	}
-	if parsed.Position != 2 {
-		t.Errorf("Position: got %d, want 2", parsed.Position)
-	}
-	if parsed.PersonType != 9 {
-		t.Errorf("PersonType: got %d, want 9", parsed.PersonType)
+func TestLogEntryResultDescription(t *testing.T) {
+	var e LogEntry
+	e.Result = 4
+	if desc := e.ResultDescription(); desc != "No permission" {
+		t.Errorf("ResultDescription: got %q, want \"No permission\"", desc)
 	}
 }
 
-func TestAuthRightBitFieldsMaxValues(t *testing.T) {
-	orig := &AuthRight{
-		CardLow:    1,
-		Flags:      0x007F,
-		Group:      7,
-		Position:   3,
-		PersonType: 15,
-	}
-	data, err := orig.AppendBinary(nil)
-	if err != nil {
-		t.Fatalf("AppendBinary: %v", err)
-	}
-	var parsed AuthRight
-	if err := parsed.UnmarshalBinary(data); err != nil {
-		t.Fatalf("UnmarshalBinary: %v", err)
-	}
-	if parsed.Group != 7 {
-		t.Errorf("Group: got %d, want 7", parsed.Group)
-	}
-	if parsed.Position != 3 {
-		t.Errorf("Position: got %d, want 3", parsed.Position)
-	}
-	if parsed.PersonType != 15 {
-		t.Errorf("PersonType: got %d, want 15", parsed.PersonType)
-	}
-	if parsed.Flags != 0x007F {
-		t.Errorf("Flags: got 0x%04x, want 0x007f", parsed.Flags)
+func TestLogTypeString(t *testing.T) {
+	if s := LogTypeSwipe.String(); s != "Card swipe" {
+		t.Errorf("LogTypeSwipe.String(): got %q, want \"Card swipe\"", s)
 	}
 }
 
-func TestLogEntrySubTypeBitExtraction(t *testing.T) {
+func TestDirectionString(t *testing.T) {
+	if s := DirEntry.String(); s != "Entry" {
+		t.Errorf("DirEntry.String(): got %q, want \"Entry\"", s)
+	}
+	if s := DirExit.String(); s != "Exit" {
+		t.Errorf("DirExit.String(): got %q, want \"Exit\"", s)
+	}
+	if s := DirUnknown.String(); s != "Unknown" {
+		t.Errorf("DirUnknown.String(): got %q, want \"Unknown\"", s)
+	}
+}
+
+func TestLogEntryDirection(t *testing.T) {
 	raw := []byte{
 		0x00, 0x00, 0x00, 0x00, 0x20, 0xfb, 0x6e, 0x20,
-		0x9c, 0x24, 0x37, 0x5d, 0x29, 0x04, 0x09, 0x4D,
+		0x9c, 0x24, 0x37, 0x5d, 0x09, 0x04, 0x01, 0x00,
 	}
 	var e LogEntry
 	if err := e.UnmarshalBinary(raw); err != nil {
 		t.Fatalf("UnmarshalBinary: %v", err)
 	}
-	if e.SubType != 6 {
-		t.Errorf("SubType: got %d, want 6", e.SubType)
-	}
-	if e.IsName != 1 {
-		t.Errorf("IsName: got %d, want 1", e.IsName)
-	}
-	if e.ExtReader != 1 {
-		t.Errorf("ExtReader: got %d, want 1", e.ExtReader)
-	}
-}
-
-func TestLogEntryCardNumberString(t *testing.T) {
-	e := &LogEntry{CardHigh: 0, CardLow: 1234567890}
-	if s := e.CardNumberString(); s != "1234567890" {
-		t.Errorf("CardNumberString: got %q, want \"1234567890\"", s)
+	if e.Direction != DirEntry {
+		t.Errorf("Direction: got %v, want DirEntry", e.Direction)
 	}
 }

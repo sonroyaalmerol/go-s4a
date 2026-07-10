@@ -2,6 +2,7 @@ package s4a
 
 import (
 	"encoding/binary"
+	"fmt"
 	"time"
 	"unsafe"
 )
@@ -25,18 +26,18 @@ type Event struct {
 	RawHeader  []byte
 	RawPayload []byte
 
-	CardData   string
-	CardType   string
-	DeviceID   string
-	Result     string
-	SwipeTime  string
-	ReaderNo   string
-	DoorNo     string
-	Direction  string
-	DeviceName string
-	LogType    string
-	LogSubType string
-	IDCardChip string
+	CardData     string
+	CardType     string
+	DeviceID     string
+	Result       string
+	SwipeTime    string
+	ReaderNo     string
+	DoorNo       string
+	DirectionStr string
+	DeviceName   string
+	LogType      string
+	LogSubType   string
+	IDCardChip   string
 
 	HBControllerFlag  string
 	HBTimeoutConfig   string
@@ -156,7 +157,7 @@ func assignCardSwipeField(evt *Event, idx int, val string) {
 	case 6:
 		evt.DoorNo = val
 	case 7:
-		evt.Direction = val
+		evt.DirectionStr = val
 	case 8:
 		evt.DeviceName = val
 	case 9:
@@ -213,10 +214,50 @@ func assignLogField(evt *Event, idx int, val string) {
 	case 6:
 		evt.DoorNo = val
 	case 7:
-		evt.Direction = val
+		evt.DirectionStr = val
 	case 8:
 		evt.DeviceName = val
 	}
+}
+
+func (e *Event) Door() uint8 {
+	return parseUintField(e.DoorNo)
+}
+
+func (e *Event) Reader() uint8 {
+	return parseUintField(e.ReaderNo)
+}
+
+func (e *Event) ResultCode() uint8 {
+	return parseUintField(e.Result)
+}
+
+func (e *Event) Direction() Direction {
+	switch parseUintField(e.DirectionStr) {
+	case 1:
+		return DirEntry
+	case 2:
+		return DirExit
+	default:
+		return DirUnknown
+	}
+}
+
+func (e *Event) Time() (time.Time, error) {
+	if e.SwipeTime == "" {
+		return time.Time{}, fmt.Errorf("empty time")
+	}
+	return time.ParseInLocation("2006-01-02 15:04:05", e.SwipeTime, time.Local)
+}
+
+func parseUintField(s string) uint8 {
+	var n uint8
+	for _, c := range s {
+		if c >= '0' && c <= '9' {
+			n = n*10 + uint8(c-'0')
+		}
+	}
+	return n
 }
 
 func b2s(b []byte) string {

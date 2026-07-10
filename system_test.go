@@ -2,6 +2,7 @@ package s4a
 
 import (
 	"testing"
+	"time"
 )
 
 func TestDoorRef(t *testing.T) {
@@ -118,7 +119,7 @@ func TestSystemOpenDoorInterlockBlocked(t *testing.T) {
 	s.doorState[refB] = true
 	s.mu.Unlock()
 
-	err := s.OpenDoor(nil, "a:65534", 1, 300)
+	err := s.OpenDoor(nil, "a:65534", 1, 3*time.Second)
 	if err == nil {
 		t.Error("expected inter-lock error")
 	}
@@ -131,7 +132,7 @@ func TestSystemOpenDoorMultiCardBlocked(t *testing.T) {
 	s.multiCard[ref] = 3
 	s.mu.Unlock()
 
-	err := s.OpenDoor(nil, "a:65534", 1, 300)
+	err := s.OpenDoor(nil, "a:65534", 1, 3*time.Second)
 	if err == nil {
 		t.Error("expected multi-card error")
 	}
