@@ -10,37 +10,33 @@ Requires Go 1.26. MIT licensed.
 
 ## How It Works
 
-A door access control system has three layers: **controllers** (hardware at each door), a **server** (your application), and **readers** (card scanners, keypads, ID readers wired to controllers).
+A door access control system has three layers: **controllers** (hardware at each door), a **server** (your application -- replacing the original Windows S4A software), and **readers** (card scanners, keypads, ID readers wired to controllers).
 
 ### Network Topology
 
-```
-┌─────────────────────────────────────────────────────┐
-│                    Server (your app)                │
-│                                                     │
-│  ┌─────────────────┐    ┌─────────────────────┐     │
-│  │  Event Listener  │    │    UDP/TCP Client    │     │
-│  │  :50000 (listen) │    │  → :65534 (send cmd) │     │
-│  └────────┬─────────┘    └──────────┬──────────┘     │
-└───────────┼─────────────────────────┼────────────────┘
-            │                         │
-    ┌───────┴─────────────────────────┴────────┐
-    │              LAN / WAN                    │
-    └───────┬─────────────────────────┬────────┘
-            │                         │
-   ┌────────┴────────┐       ┌────────┴────────┐
-   │  Controller #1   │       │  Controller #2   │
-   │  (10.254.33.10)  │       │  (10.254.33.11)  │
-   │                  │       │                  │
-   │  ┌──┐ ┌──┐ ┌──┐ │       │  ┌──┐ ┌──┐ ┌──┐ │
-   │  │R1│ │R2│ │R3│ │       │  │R1│ │R2│ │R3│ │
-   │  └──┘ └──┘ └──┘ │       │  └──┘ └──┘ └──┘ │
-   │  ═══Door 1═══    │       │  ═══Door 1═══    │
-   │  ═══Door 2═══    │       │  ═══Door 2═══    │
-   └──────────────────┘       └──────────────────┘
+```mermaid
+graph TD
+    subgraph Server[Server: your Go app]
+        EL[Event Listener\n:50000]
+        CC[UDP/TCP Client\n->:65534]
+    end
+    subgraph LAN[LAN / WAN]
+    end
+    subgraph C1[Controller 1\n10.254.33.10]
+        R1a[R1] --- D1a[Door 1]
+        R2a[R2] --- D2a[Door 2]
+    end
+    subgraph C2[Controller 2\n10.254.33.11]
+        R1b[R1] --- D1b[Door 1]
+        R2b[R2] --- D2b[Door 2]
+    end
+    C1 -- events --> EL
+    CC -- commands --> C1
+    C2 -- events --> EL
+    CC -- commands --> C2
 ```
 
-Each controller manages 1–4 doors and up to 8 readers (4 serial + 4 Wiegand). The controller is the decision maker — it verifies card authorizations locally against its stored card database.
+Each controller manages 1-4 doors and up to 8 readers (4 serial + 4 Wiegand). The controller is the decision maker: it verifies card authorizations locally against its stored card database.
 
 ### Two-Channel Communication
 
@@ -60,31 +56,25 @@ Controllers use **two ports** with distinct roles:
 | Mode       | How it works                                                                                                                              | When to use                                     |
 | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
 | UDP        | Server sends commands to controller:65534; controller sends events to server:50000. No connection state.                                  | Simple LAN deployments, low controller count    |
-| TCP Client | Controller initiates TCP connection to server:50000 and keeps it open. All events and command responses flow over this single connection. | Most common — NAT-friendly, maintains heartbeat |
+| TCP Client | Controller initiates TCP connection to server:50000 and keeps it open. All events and command responses flow over this single connection. | Most common -- NAT-friendly, maintains heartbeat |
 | TCP Server | Server connects to controller:50000. Rare, requires controller to have a fixed IP.                                                        | Unusual setups                                  |
 
 For TCP, each message is prefixed with a 4-byte big-endian length header. The binary frame format is identical across all transports.
 
 ### What Happens When Someone Swipes a Card
 
-```
-  Reader          Controller              Server
-    │                 │                      │
-    │  card data      │                      │
-    │────────────────>│                      │
-    │                 │                      │
-    │                 │  check local auth DB │
-    │                 │  (24-byte xRight)   │
-    │                 │                      │
-    │                 │  decision: allow     │
-    │                 │──────────────────────>│
-    │                 │  swipe event         │  Event (port 50000)
-    │                 │  (pipe-delimited)   │  parse with ParseEvent()
-    │                 │                      │
-    │                 │  open relay          │
-    │<────────────────│                      │
-    │  door unlocks   │                      │
-    │                 │                      │
+```mermaid
+sequenceDiagram
+    participant R as Reader
+    participant C as Controller
+    participant S as Server
+    R->>C: card data
+    C->>C: check local auth DB (24-byte xRight)
+    C->>C: decision: allow
+    C->>S: swipe event (port 50000)
+    Note right of S: parse with ParseEvent()
+    C->>R: open relay
+    R->>R: door unlocks
 ```
 
 **Key point:** The controller makes the access decision locally. It checks its stored authorization database (up to 50,000 cards). If the card is valid, it opens the door and reports the swipe to the server. If the card is invalid, it still reports the swipe with an error code (e.g., code 4 = no permission).
@@ -99,18 +89,22 @@ The server never sees the swipe before the controller has already acted. This me
 
 The controller pushes 10 event types to the server on port 50000:
 
-| Type | Name                   | When it fires                             | Format                        |
-| ---- | ---------------------- | ----------------------------------------- | ----------------------------- | ----------- | -------------- | ------- | ---- | ----------- | ------- |
-| 1    | General event          | Misc controller events                    | Pipe-delimited                |
-| 2    | Card swipe (async log) | Historical log record                     | Pipe-delimited                |
-| 3    | ID card                | National ID card read                     | 14B + 256B text + 1024B photo |
-| 4    | Heartbeat              | Periodic (configurable, every ~30s)       | `flag                         | timeout_cfg | timeout_remain | count   | name | global_flag | fw_ver` |
-| 5    | Debug                  | Debug info                                | Pipe-delimited                |
-| 6    | Signal change          | Input terminal state change               | `prev;curr                    | flag        | time           | cfg1..8 | name | addr`       |
-| 7    | Operation log          | Operator action log                       | Pipe-delimited                |
-| 8    | Pull auth request      | Controller requests auth data from server | Pipe-delimited                |
-| 9    | Auth result            | Result of pushed authorization            | Pipe-delimited                |
-| 10   | Get time               | Controller asks server for time           | Pipe-delimited                |
+| Type | Name               | When it fires                        | Format                                 |
+| ---- | ------------------ | ------------------------------------ | -------------------------------------- |
+| 1    | General event      | Misc controller events               | Pipe-delimited                         |
+| 2    | Card swipe (async) | Historical log record                | Pipe-delimited                         |
+| 3    | ID card            | National ID card read                | 14B + 256B text + 1024B photo          |
+| 4    | Heartbeat          | Periodic (every ~30s, configurable)  | 7 pipe-delimited fields (see below)    |
+| 5    | Debug              | Debug info                           | Pipe-delimited                         |
+| 6    | Signal change      | Input terminal state change          | Semicolon + pipe-delimited (see below) |
+| 7    | Operation log      | Operator action log                  | Pipe-delimited                         |
+| 8    | Pull auth request  | Controller requests auth from server | Pipe-delimited                         |
+| 9    | Auth result        | Result of pushed authorization       | Pipe-delimited                         |
+| 10   | Get time           | Controller asks server for time      | Pipe-delimited                         |
+
+Heartbeat format: `ControllerFlag`, `TimeoutConfig`, `TimeoutRemaining`, `TimeoutCount`, `ControllerName`, `GlobalFlag`, `FirmwareVersion` -- fields separated by `|`
+
+Signal change format: `PrevSignals;CurrSignals`, `ControllerFlag`, `Time`, `Config1`..`Config8`, `DeviceName`, `PeerAddr` -- semicolon between signal states, then `|` between fields
 
 Real-time card swipes (type not in RptCmdHead) arrive as raw pipe-delimited strings without the 8-byte header.
 
@@ -125,22 +119,17 @@ The server must respond with a **Heartbeat ACK** (29 bytes) to confirm the conne
 
 ### Authorization Lifecycle
 
-```
- Server                                  Controller
-   │                                        │
-   │  Authorize (cmd 0x12, 24-byte xRight) │
-   │───────────────────────────────────────>│
-   │                                        │  store in local DB
-   │  Response (cmd 0x13, result byte)     │
-   │<───────────────────────────────────────│
-   │                                        │
-   │  ... card is now valid on controller   │
-   │                                        │
-   │  Revoke (cmd 0x14, 8-byte card#)      │
-   │───────────────────────────────────────>│
-   │                                        │  remove from DB
-   │  Response (cmd 0x15, result byte)     │
-   │<───────────────────────────────────────│
+```mermaid
+sequenceDiagram
+    participant S as Server
+    participant C as Controller
+    S->>C: Authorize (cmd 0x12, 24-byte xRight)
+    Note right of C: store in local DB
+    C->>S: Response (cmd 0x13, result byte)
+    Note over S,C: card is now valid on controller
+    S->>C: Revoke (cmd 0x14, 8-byte card#)
+    Note right of C: remove from DB
+    C->>S: Response (cmd 0x15, result byte)
 ```
 
 Each authorization (xRight) defines:
@@ -148,33 +137,24 @@ Each authorization (xRight) defines:
 - **Which card** (CardHigh + CardLow, or use isName bit for name-based auth)
 - **When it's valid** (BeginDate/Time → EndDate/Time, BCD encoded)
 - **Which readers** (ReaderMask bitmask: 0xFF = all 8 readers)
-- **Which time zones** (TimeZone bitmask: 0 = any time, or combine zones 2–8)
-- **How many uses** (RemainCount: 0xFFFF = unlimited, 1–59999 = count, 60000+ = directional)
-- **Person attributes** (Group, Position, PersonType — for filtering)
+- **Which time zones** (TimeZone bitmask: 0 = any time, or combine zones 2-8)
+- **How many uses** (RemainCount: 0xFFFF = unlimited, 1-59999 = count, 60000+ = directional)
+- **Person attributes** (Group, Position, PersonType -- for filtering)
 - **Flags** (Anti-passback, debt, package, etc.)
 
 ### Log Retrieval
 
 Controllers store swipe logs locally. The server pulls them with **Monitor/Log** (cmd 0x38):
 
-```
- Server                                  Controller
-   │                                        │
-   │  MonitorLog (cmd 0x38, index=0)       │
-   │───────────────────────────────────────>│
-   │                                        │
-   │  Response (48 bytes):                  │
-   │    LogSeq, LogDetail, LogCount,       │
-   │    AuthCount, CurrentTime,             │
-   │    ReaderRelay, DeviceFlag              │
-   │<───────────────────────────────────────│
-   │                                        │
-   │  MonitorLog (cmd 0x38, index=1)       │
-   │───────────────────────────────────────>│
-   │                                        │
-   │  ... increment index until             │
-   │    LogHigh=0 && LogLow=0               │
-   │<───────────────────────────────────────│
+```mermaid
+sequenceDiagram
+    participant S as Server
+    participant C as Controller
+    S->>C: MonitorLog (cmd 0x38, index=0)
+    C->>S: Response (48 bytes): LogSeq, LogDetail, LogCount, AuthCount, CurrentTime, ReaderRelay, DeviceFlag
+    S->>C: MonitorLog (cmd 0x38, index=1)
+    C->>S: Response ...
+    Note over S,C: increment index until LogHigh=0 and LogLow=0
 ```
 
 Use index 0 for the latest record, then increment. When `LogHigh == 0 && LogLow == 0`, there are no more records.
@@ -190,22 +170,26 @@ This SDK focuses on the binary TCP/UDP protocol. For HTTP/WebSocket integration,
 
 ### Special Card Numbers
 
-The controller reserves these card numbers for special events — they cannot be used for normal IC/ID cards:
+The controller reserves these card numbers for special events -- they cannot be used for normal IC/ID cards:
 
 | Card Number        | Meaning                                               |
 | ------------------ | ----------------------------------------------------- |
 | < 255              | Reserved for event codes                              |
 | 666666             | Simulated swipe (triggered by signal config)          |
 | 7777777            | Gate timeout (person didn't pass through after swipe) |
-| 111111111111111110 | Wildcard — grants access to all national ID cards     |
+| 111111111111111110 | Wildcard -- grants access to all national ID cards     |
 
 ### Typical Deployment Flow
 
-```
-1. Discover controllers
-   controllers, _ := s4a.Discover(ctx, 5*time.Second)
+1. **Discover controllers**
 
-2. Configure each controller
+   ```go
+   controllers, _ := s4a.Discover(ctx, 5*time.Second)
+   ```
+
+2. **Configure each controller**
+
+   ```go
    tc := s4a.NewTextCommand().
        SetIP("10.254.33.10").
        SetMask("255.255.255.0").
@@ -215,20 +199,29 @@ The controller reserves these card numbers for special events — they cannot be
        SetReportPort(50000).
        SetName("FrontDoor")
    // send via text command frame (cmd 0x94)
+   ```
 
-3. Upload authorizations
+3. **Upload authorizations**
+
+   ```go
    right := &s4a.AuthRight{...}
    client.Authorize(ctx, right)
+   ```
 
-4. Start event listener
+4. **Start event listener**
+
+   ```go
    listener.ListenEvents(ctx, handler)
+   ```
 
-5. Handle events — log swipes, send alerts, enforce business rules
+5. **Handle events** -- log swipes, send alerts, enforce business rules
 
-6. Periodically sync time and pull logs
+6. **Periodically sync time and pull logs**
+
+   ```go
    ct.SyncTime(ctx)
-   ct.RefreshInfo(ctx)  // MonitorLog(0) for status
-```
+   ct.RefreshInfo(ctx) // MonitorLog(0) for status
+   ```
 
 ## Protocol
 
@@ -279,18 +272,18 @@ All other events have an 8-byte RptCmdHead:
 [c8] [type 1B] [dataLen 2B BE] [seq 4B LE] [payload NB]
 ```
 
-| Type | Name                   | Payload format                                                              |
-| ---- | ---------------------- | --------------------------------------------------------------------------- |
-| 1    | General event          | `Pipe-delimited`                                                            |
-| 2    | Card swipe (async log) | `Pipe-delimited`                                                            |
-| 3    | ID card                | `14+256+1024+1 bytes binary`                                                |
-| 4    | Heartbeat              | `flag\|timeout_cfg\|timeout_remain\|timeout_cnt\|name\|global_flag\|fw_ver` |
-| 5    | Debug                  | `Pipe-delimited`                                                            |
-| 6    | Signal change          | `prev;curr\|flag\|time\|config1..8\|name\|peer_addr`                        |
-| 7    | Operation log          | `Pipe-delimited`                                                            |
-| 8    | Pull auth request      | `Pipe-delimited`                                                            |
-| 9    | Auth change result     | `Pipe-delimited`                                                            |
-| 10   | Get time               | `Pipe-delimited`                                                            |
+| Type | Name                   | Payload format                                                                                     |
+| ---- | ---------------------- | -------------------------------------------------------------------------------------------------- |
+| 1    | General event          | Pipe-delimited                                                                                     |
+| 2    | Card swipe (async log) | Pipe-delimited                                                                                     |
+| 3    | ID card                | 14+256+1024+1 bytes binary                                                                         |
+| 4    | Heartbeat              | 7 pipe-delimited fields: flag, timeout_cfg, timeout_remain, timeout_cnt, name, global_flag, fw_ver |
+| 5    | Debug                  | Pipe-delimited                                                                                     |
+| 6    | Signal change          | Semicolon + pipe-delimited: prev;curr, flag, time, config1..8, name, peer_addr                     |
+| 7    | Operation log          | Pipe-delimited                                                                                     |
+| 8    | Pull auth request      | Pipe-delimited                                                                                     |
+| 9    | Auth change result     | Pipe-delimited                                                                                     |
+| 10   | Get time               | Pipe-delimited                                                                                     |
 
 Heartbeat requires ACK (29 bytes). Async log records require ACK (37 bytes).
 
