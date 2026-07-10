@@ -7,15 +7,17 @@ import (
 )
 
 type LogEntry struct {
-	CardHigh uint32
-	CardLow  uint32
-	Date     time.Time
-	Door     uint8
-	Reader   uint8
-	Result   uint8
-	Dir      uint8
-	Type     uint8
-	SubType  uint8
+	CardHigh  uint32
+	CardLow   uint32
+	Date      time.Time
+	Door      uint8
+	Reader    uint8
+	Result    uint8
+	Dir       uint8
+	Type      uint8
+	SubType   uint8
+	IsName    uint8
+	ExtReader uint8
 }
 
 func (e *LogEntry) UnmarshalBinary(data []byte) error {
@@ -34,7 +36,9 @@ func (e *LogEntry) UnmarshalBinary(data []byte) error {
 	e.Result = data[13]
 	e.Dir = data[14] & 0x03
 	e.Type = data[14] >> 2
-	e.SubType = data[15] & 0x1f
+	e.SubType = (data[15] >> 1) & 0x1f
+	e.IsName = data[15] & 0x01
+	e.ExtReader = (data[15] >> 6) & 0x03
 	return nil
 }
 

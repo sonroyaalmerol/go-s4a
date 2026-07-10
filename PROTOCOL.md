@@ -269,7 +269,7 @@ Example: `00 00 00 00 20 fb 6e 20 9c 24 37 5d 29 04 09 00`
 
 - Card number = 0544144160
 - Time = 2018-04-28 11:41:46
-- Door = 1, Reader = 5, Result = 4 (No permission), Direction = entry, Type = card swipe log
+- Door = 1, Reader = 5, Result = 4 (No permission), Direction = entry, Type = card swipe log, IsName = 1, SubType = 4
 
 ### 6.5 Authorization Structure (xRight, 24 bytes, all fields little-endian)
 

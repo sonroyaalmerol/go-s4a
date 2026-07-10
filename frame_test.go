@@ -274,6 +274,88 @@ func TestUnmarshalLogEntryTooShort(t *testing.T) {
 	}
 }
 
+func TestAuthRightBitFields(t *testing.T) {
+	orig := &AuthRight{
+		CardHigh:    0,
+		CardLow:     0x499602D2,
+		BeginDate:   BCDDateEncode(2025, 1, 15),
+		EndDate:     BCDDateEncode(2030, 12, 31),
+		ReaderMask:  0xFF,
+		RemainCount: 0xFFFF,
+		Flags:       0,
+		Group:       5,
+		Position:    2,
+		PersonType:  9,
+	}
+	data, err := orig.AppendBinary(nil)
+	if err != nil {
+		t.Fatalf("AppendBinary: %v", err)
+	}
+	var parsed AuthRight
+	if err := parsed.UnmarshalBinary(data); err != nil {
+		t.Fatalf("UnmarshalBinary: %v", err)
+	}
+	if parsed.Group != 5 {
+		t.Errorf("Group: got %d, want 5", parsed.Group)
+	}
+	if parsed.Position != 2 {
+		t.Errorf("Position: got %d, want 2", parsed.Position)
+	}
+	if parsed.PersonType != 9 {
+		t.Errorf("PersonType: got %d, want 9", parsed.PersonType)
+	}
+}
+
+func TestAuthRightBitFieldsMaxValues(t *testing.T) {
+	orig := &AuthRight{
+		CardLow:    1,
+		Flags:      0x007F,
+		Group:      7,
+		Position:   3,
+		PersonType: 15,
+	}
+	data, err := orig.AppendBinary(nil)
+	if err != nil {
+		t.Fatalf("AppendBinary: %v", err)
+	}
+	var parsed AuthRight
+	if err := parsed.UnmarshalBinary(data); err != nil {
+		t.Fatalf("UnmarshalBinary: %v", err)
+	}
+	if parsed.Group != 7 {
+		t.Errorf("Group: got %d, want 7", parsed.Group)
+	}
+	if parsed.Position != 3 {
+		t.Errorf("Position: got %d, want 3", parsed.Position)
+	}
+	if parsed.PersonType != 15 {
+		t.Errorf("PersonType: got %d, want 15", parsed.PersonType)
+	}
+	if parsed.Flags != 0x007F {
+		t.Errorf("Flags: got 0x%04x, want 0x007f", parsed.Flags)
+	}
+}
+
+func TestLogEntrySubTypeBitExtraction(t *testing.T) {
+	raw := []byte{
+		0x00, 0x00, 0x00, 0x00, 0x20, 0xfb, 0x6e, 0x20,
+		0x9c, 0x24, 0x37, 0x5d, 0x29, 0x04, 0x09, 0x4D,
+	}
+	var e LogEntry
+	if err := e.UnmarshalBinary(raw); err != nil {
+		t.Fatalf("UnmarshalBinary: %v", err)
+	}
+	if e.SubType != 6 {
+		t.Errorf("SubType: got %d, want 6", e.SubType)
+	}
+	if e.IsName != 1 {
+		t.Errorf("IsName: got %d, want 1", e.IsName)
+	}
+	if e.ExtReader != 1 {
+		t.Errorf("ExtReader: got %d, want 1", e.ExtReader)
+	}
+}
+
 func TestLogEntryCardNumberString(t *testing.T) {
 	e := &LogEntry{CardHigh: 0, CardLow: 1234567890}
 	if s := e.CardNumberString(); s != "1234567890" {

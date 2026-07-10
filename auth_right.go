@@ -37,8 +37,8 @@ func (a *AuthRight) AppendBinary(b []byte) ([]byte, error) {
 	b[off+17] = a.ReaderMask
 	binary.LittleEndian.PutUint16(b[off+18:off+20], a.RemainCount)
 	binary.LittleEndian.PutUint16(b[off+20:off+22], a.Flags)
-	b[off+22] = a.Group | (a.Position << 3) | (a.PersonType << 5)
-	b[off+23] = 0
+	bits := uint32(a.Flags) | uint32(a.Group)<<23 | uint32(a.Position)<<26 | uint32(a.PersonType)<<28
+	binary.LittleEndian.PutUint32(b[off+20:off+24], bits)
 	return b, nil
 }
 
@@ -55,9 +55,10 @@ func (a *AuthRight) UnmarshalBinary(data []byte) error {
 	a.TimeZone = data[16]
 	a.ReaderMask = data[17]
 	a.RemainCount = binary.LittleEndian.Uint16(data[18:20])
-	a.Flags = binary.LittleEndian.Uint16(data[20:22])
-	a.Group = data[22] & 0x07
-	a.Position = (data[22] >> 3) & 0x03
-	a.PersonType = (data[22] >> 5) & 0x0f
+	bits := binary.LittleEndian.Uint32(data[20:24])
+	a.Flags = uint16(bits & 0xffff)
+	a.Group = uint8((bits >> 23) & 0x07)
+	a.Position = uint8((bits >> 26) & 0x03)
+	a.PersonType = uint8((bits >> 28) & 0x0f)
 	return nil
 }

@@ -149,7 +149,7 @@ func ParseMonitorLogResponse(f *Frame) (*MonitorLogResponse, error) {
 	r.LogResult = d[17]
 	r.LogDir = d[18] & 0x03
 	r.LogType = d[18] >> 2
-	r.LogSubType = d[19] & 0x1f
+	r.LogSubType = (d[19] >> 1) & 0x1f
 	r.LogCount = binary.LittleEndian.Uint32(d[20:24])
 	r.AuthCount = binary.LittleEndian.Uint32(d[24:28])
 	r.CurrentTime = make([]byte, 7)
